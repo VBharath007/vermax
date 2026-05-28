@@ -745,41 +745,34 @@ exports.getWorksByLabour = async (labourId, tenant_id) => {
         legacyNames = Array.from(new Set([raw, lower, upper, title]));
     }
 
-    let q1 = worksCollection.orderBy(`labourDetails.${labourId}.headLabourId`);
-    let q2 = worksCollection.where("labourDetails.headLabourId", "==", labourId);
-
+    // Query all works for the tenant (or all if GLOBAL)
+    let query = worksCollection;
     if (tenant_id && tenant_id !== 'GLOBAL') {
-        q1 = q1.where("tenant_id", "==", tenant_id);
-        q2 = q2.where("tenant_id", "==", tenant_id);
+        query = query.where("tenant_id", "==", tenant_id);
     }
+    const snapshot = await query.get();
 
-    const queries = [
-        // Modern keyed-map format — uses orderBy as "field exists" check
-        q1.get(),
-        // Legacy flat format (pre-migration)
-        q2.get(),
-    ];
+    if (snapshot.empty) return { projects: [], totalWorks: 0 };
 
-    if (legacyNames.length > 0) {
-        let q3 = worksCollection.where("labourName", "in", legacyNames);
-        if (tenant_id && tenant_id !== 'GLOBAL') {
-            q3 = q3.where("tenant_id", "==", tenant_id);
-        }
-        queries.push(q3.get());
-    }
+    const works = [];
+    snapshot.docs.forEach(doc => {
+        const data = doc.data();
 
-    const snapshots = await Promise.all(queries);
+        // 1. Keyed-map check: labourDetails.<labourId> exists
+        const hasModernLabour = data.labourDetails && data.labourDetails[labourId];
 
-    const worksMap = new Map();
-    snapshots.forEach(snapshot => {
-        if (!snapshot.empty) {
-            snapshot.docs.forEach(doc => worksMap.set(doc.id, { workId: doc.id, ...doc.data() }));
+        // 2. Legacy flat format: labourDetails.headLabourId == labourId
+        const hasLegacyLabour = data.labourDetails && data.labourDetails.headLabourId === labourId;
+
+        // 3. Legacy name list
+        const hasLegacyName = data.labourName && legacyNames.includes(data.labourName);
+
+        if (hasModernLabour || hasLegacyLabour || hasLegacyName) {
+            works.push({ workId: doc.id, ...data });
         }
     });
 
-    if (worksMap.size === 0) return { projects: [], totalWorks: 0 };
-
-    const works = Array.from(worksMap.values());
+    if (works.length === 0) return { projects: [], totalWorks: 0 };
 
     // Preload masters and subTypes in parallel to avoid duplicate DB calls in the loop
     const [masters, subTypes] = await Promise.all([
