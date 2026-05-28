@@ -198,8 +198,21 @@ exports.getMe = async (req, res) => {
         if (!userDoc.exists) {
             return res.status(404).json({ message: 'User not found' });
         }
-        const user = userDoc.data();
+        const user = { id: userDoc.id, ...userDoc.data() };
         delete user.password;
+
+        // Fetch Tenant Features if they are not explicitly overridden at the user level
+        if (user.features && Array.isArray(user.features)) {
+            // keep user features
+        } else if (user.tenant_id && user.tenant_id !== 'GLOBAL') {
+            const tenantDoc = await db.collection("tenants").doc(user.tenant_id).get();
+            if (tenantDoc.exists) {
+                user.features = tenantDoc.data().features || [];
+            }
+        } else if (user.role === 'super_admin' || user.role === 'admin') {
+            user.features = ['dashboard', 'project_management', 'approvals', 'employee_management', 'dealer_management', 'bank_management', 'reminders'];
+        }
+
         res.status(200).json({ data: user });
     } catch (error) {
         res.status(500).json({ message: error.message });
