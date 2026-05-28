@@ -1,8 +1,12 @@
 const projectService = require("./project.service");
 const { db } = require("../../config/firebase");
+const { isGlobalTenant } = require("../../middleware/tenant.middleware");
 
 exports.createProject = async (req, res, next) => {
     try {
+        if (!isGlobalTenant(req)) {
+            req.body.tenant_id = req.tenantId;
+        }
         const result = await projectService.createProject(req.body);
         res.status(201).json({ success: true, data: result });
     } catch (error) {
@@ -12,9 +16,17 @@ exports.createProject = async (req, res, next) => {
 
 exports.getAllProjects = async (req, res) => {
   try {
+    let projectQuery = db.collection("projects");
+    let imageQuery = db.collection("projectImages");
+
+    if (!isGlobalTenant(req)) {
+        projectQuery = projectQuery.where("tenant_id", "==", req.tenantId);
+        imageQuery = imageQuery.where("tenant_id", "==", req.tenantId);
+    }
+
     const [projectSnap, imageSnap] = await Promise.all([
-      db.collection("projects").get(),
-      db.collection("projectImages").get(),
+      projectQuery.get(),
+      imageQuery.get(),
     ]);
 
     // Build imageMap
@@ -117,6 +129,26 @@ exports.getWorkHistory = async (req, res) => {
     try {
         const { projectNo } = req.params;
 
+        let queryProjects = db.collection("projects").where("projectNo", "==", projectNo);
+        let queryWorks = db.collection("works").where("projectNo", "==", projectNo);
+        let queryReceived = db.collection("materialReceived").where("projectNo", "==", projectNo);
+        let queryUsed = db.collection("materialUsed").where("projectNo", "==", projectNo);
+        let queryAdvances = db.collection("advances").where("projectNo", "==", projectNo);
+        let queryExpenses = db.collection("siteExpenses").where("projectNo", "==", projectNo);
+        let queryRequired = db.collection("materialRequired").where("projectNo", "==", projectNo);
+        let queryStock = db.collection("stock").where("projectNo", "==", projectNo);
+
+        if (!isGlobalTenant(req)) {
+            queryProjects = queryProjects.where("tenant_id", "==", req.tenantId);
+            queryWorks = queryWorks.where("tenant_id", "==", req.tenantId);
+            queryReceived = queryReceived.where("tenant_id", "==", req.tenantId);
+            queryUsed = queryUsed.where("tenant_id", "==", req.tenantId);
+            queryAdvances = queryAdvances.where("tenant_id", "==", req.tenantId);
+            queryExpenses = queryExpenses.where("tenant_id", "==", req.tenantId);
+            queryRequired = queryRequired.where("tenant_id", "==", req.tenantId);
+            queryStock = queryStock.where("tenant_id", "==", req.tenantId);
+        }
+
         const [
             projectSnap,
             worksSnap,
@@ -127,14 +159,14 @@ exports.getWorkHistory = async (req, res) => {
             requiredSnap,
             stockSnap
         ] = await Promise.all([
-            db.collection("projects").where("projectNo", "==", projectNo).get(),
-            db.collection("works").where("projectNo", "==", projectNo).get(),
-            db.collection("materialReceived").where("projectNo", "==", projectNo).get(),
-            db.collection("materialUsed").where("projectNo", "==", projectNo).get(),
-            db.collection("advances").where("projectNo", "==", projectNo).get(),
-            db.collection("siteExpenses").where("projectNo", "==", projectNo).get(),
-            db.collection("materialRequired").where("projectNo", "==", projectNo).get(),
-            db.collection("stock").where("projectNo", "==", projectNo).get()
+            queryProjects.get(),
+            queryWorks.get(),
+            queryReceived.get(),
+            queryUsed.get(),
+            queryAdvances.get(),
+            queryExpenses.get(),
+            queryRequired.get(),
+            queryStock.get()
         ]);
 
         const project = projectSnap.docs[0]?.data();

@@ -1,5 +1,6 @@
 const bcrypt = require("bcryptjs");
 const { db } = require("../config/firebase");
+const { isGlobalTenant } = require("../middleware/tenant.middleware");
 const USERS = "users";
 const ATTENDANCE = "attendance";
 const dayjs = require("dayjs");
@@ -12,17 +13,26 @@ exports.addEmployee = async (req, res) => {
     try {
         const { name, email, empID, labourType, wagesType, salaryPerDay } = req.body;
 
+        // Validate required fields before they hit Firestore (undefined crashes Firestore queries)
+        if (!empID || !email || !name) {
+            return res.status(400).json({ message: "name, email, and empID are required" });
+        }
+
         // Check duplicates
-        const empCheck = await db.collection(USERS)
-            .where("empID", "==", empID)
-            .get();
+        let empQuery = db.collection(USERS).where("empID", "==", empID);
+        let emailQuery = db.collection(USERS).where("email", "==", email);
+
+        if (!isGlobalTenant(req)) {
+            empQuery = empQuery.where("tenant_id", "==", req.tenantId);
+            emailQuery = emailQuery.where("tenant_id", "==", req.tenantId);
+        }
+
+        const empCheck = await empQuery.get();
 
         if (!empCheck.empty)
-            return res.status(400).json({ message: "EmpID already exists" });
+            return res.status(400).json({ message: "EmpID already exists in this company" });
 
-        const emailCheck = await db.collection(USERS)
-            .where("email", "==", email)
-            .get();
+        const emailCheck = await emailQuery.get();
 
         if (!emailCheck.empty)
             return res.status(400).json({ message: "Email already exists" });
@@ -30,7 +40,7 @@ exports.addEmployee = async (req, res) => {
         // Default password = empID
         const hashedPassword = await bcrypt.hash(empID, 10);
 
-        await db.collection(USERS).add({
+        const userPayload = {
             name,
             email,
             empID,
@@ -41,7 +51,13 @@ exports.addEmployee = async (req, res) => {
             role: "employee",
             firstLogin: true,
             createdAt: new Date()
-        });
+        };
+
+        if (!isGlobalTenant(req)) {
+            userPayload.tenant_id = req.tenantId;
+        }
+
+        await db.collection(USERS).add(userPayload);
 
         res.json({ message: "Employee Created Successfully" });
 
@@ -59,9 +75,15 @@ exports.deleteEmployee = async (req, res) => {
     try {
         const { empID } = req.params;
 
-        const snapshot = await db.collection(USERS)
-            .where("empID", "==", empID)
-            .get();
+        if (!empID) {
+            return res.status(400).json({ message: "empID is required" });
+        }
+
+        let query = db.collection(USERS).where("empID", "==", empID);
+        if (!isGlobalTenant(req)) {
+            query = query.where("tenant_id", "==", req.tenantId);
+        }
+        const snapshot = await query.get();
 
         if (snapshot.empty)
             return res.status(404).json({ message: "Employee not found" });
@@ -87,9 +109,15 @@ exports.updateEmployee = async (req, res) => {
         const { empID } = req.params;
         const updates = req.body;
 
-        const snapshot = await db.collection(USERS)
-            .where("empID", "==", empID)
-            .get();
+        if (!empID) {
+            return res.status(400).json({ message: "empID is required" });
+        }
+
+        let query = db.collection(USERS).where("empID", "==", empID);
+        if (!isGlobalTenant(req)) {
+            query = query.where("tenant_id", "==", req.tenantId);
+        }
+        const snapshot = await query.get();
 
         if (snapshot.empty)
             return res.status(404).json({ message: "Employee not found" });

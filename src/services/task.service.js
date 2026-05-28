@@ -50,10 +50,12 @@ exports.saveTask = async (taskData) => {
 exports.getTasksByType = async (type) => {
     const snapshot = await db.collection(COLLECTION)
         .where('type', '==', type)
-        .orderBy('createdAt', 'desc')
         .get();
 
-    return snapshot.docs.map(doc => formatDoc(doc));
+    const tasks = snapshot.docs.map(doc => formatDoc(doc));
+    // Sort in memory: newest first (createdAt descending)
+    tasks.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+    return tasks;
 };
 
 // 🟡 UPDATE: Edit Task

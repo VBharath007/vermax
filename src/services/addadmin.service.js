@@ -9,6 +9,10 @@ class AdminService {
 
     // Create Admin (defaultAdmin only)
     static async addAdmin({ name, email, empID, labourType, wagesType, salaryPerDay, isDefault = false }) {
+        // Validate required fields before hitting Firestore
+        if (!empID || !email) {
+            throw new Error("empID and email are required");
+        }
         // Check duplicates
         const empCheck = await db.collection(USERS).where("empID", "==", empID).get();
         if (!empCheck.empty) throw new Error("EmpID already exists");
@@ -38,6 +42,9 @@ class AdminService {
     }
 
     static async register({ name, email, password, phone, role }) {
+        if (!email || !password) {
+            throw new Error("email and password are required");
+        }
         // Check email duplicate
         const emailCheck = await db.collection(USERS).where("email", "==", email).get();
         if (!emailCheck.empty) throw new Error("Email already exists");
@@ -117,6 +124,10 @@ class AdminService {
 
 
 const findAdmin = async (email, empID) => {
+    // Guard: Firestore throws if undefined is passed to .where()
+    if (!email || !empID) {
+        return null;
+    }
     const snapshot = await db.collection("users")
         .where("email", "==", email)
         .where("empID", "==", empID)

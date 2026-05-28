@@ -8,10 +8,11 @@ const extraWorksCollection = db.collection(EXTRA_WORKS);
  * @param {Object} data 
  * @returns {Object} created document
  */
-exports.addExtraWork = async (data) => {
+exports.addExtraWork = async (data, tenant_id) => {
     const { title, description, projectNo, amount, balance, date, type } = data;
     
     if (!title) throw new Error("Title is required");
+    if (!tenant_id) throw new Error("tenant_id is required");
 
     const newEntry = {
         title: title.trim(),
@@ -22,7 +23,8 @@ exports.addExtraWork = async (data) => {
         type: type || "General", // e.g., "Addition Work", "Material Receipt", etc.
         date: date || new Date().toISOString().split('T')[0],
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        tenant_id
     };
 
     const docRef = await extraWorksCollection.add(newEntry);
@@ -34,11 +36,14 @@ exports.addExtraWork = async (data) => {
  * @param {string} projectNo 
  * @returns {Array} list of entries
  */
-exports.getExtraWorks = async (projectNo = null) => {
+exports.getExtraWorks = async (projectNo = null, tenant_id) => {
     let query = extraWorksCollection;
     
     if (projectNo) {
         query = query.where("projectNo", "==", projectNo);
+    }
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
     }
 
     const snapshot = await query.get();
@@ -59,9 +64,10 @@ exports.getExtraWorks = async (projectNo = null) => {
  * @param {string} id 
  * @returns {Object} entry
  */
-exports.getExtraWorkById = async (id) => {
+exports.getExtraWorkById = async (id, tenant_id) => {
     const doc = await extraWorksCollection.doc(id).get();
     if (!doc.exists) throw new Error("Extra work entry not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
     return { id: doc.id, ...doc.data() };
 };
 
@@ -71,10 +77,11 @@ exports.getExtraWorkById = async (id) => {
  * @param {Object} data 
  * @returns {Object} updated entry
  */
-exports.updateExtraWork = async (id, data) => {
+exports.updateExtraWork = async (id, data, tenant_id) => {
     const docRef = extraWorksCollection.doc(id);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Extra work entry not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const updates = { ...data, updatedAt: new Date().toISOString() };
     delete updates.id;
@@ -94,10 +101,11 @@ exports.updateExtraWork = async (id, data) => {
  * @param {string} id 
  * @returns {Object} status message
  */
-exports.deleteExtraWork = async (id) => {
+exports.deleteExtraWork = async (id, tenant_id) => {
     const docRef = extraWorksCollection.doc(id);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Extra work entry not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     await docRef.delete();
     return { message: "Extra work entry deleted successfully", id };

@@ -3,7 +3,7 @@ const dealerService = require("./dealer.service");
 
 exports.getAllDealers = async (req, res) => {
     try {
-        const result = await dealerService.getAllDealers();
+        const result = await dealerService.getAllDealers(req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, error: error.message });
@@ -14,7 +14,7 @@ exports.getAllDealers = async (req, res) => {
 // GET /api/dealers/:phoneNumber
 exports.getDealerHistory = async (req, res) => {
     try {
-        const result = await dealerService.getDealerHistory(req.params.phoneNumber);
+        const result = await dealerService.getDealerHistory(req.params.phoneNumber, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, error: error.message });
@@ -25,7 +25,7 @@ exports.getDealerHistory = async (req, res) => {
 // GET /api/dealers/:phoneNumber/payments
 exports.getDealerPaymentHistory = async (req, res) => {
     try {
-        const result = await dealerService.getDealerPaymentHistory(req.params.phoneNumber);
+        const result = await dealerService.getDealerPaymentHistory(req.params.phoneNumber, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, error: error.message });
@@ -36,7 +36,7 @@ exports.getDealerPaymentHistory = async (req, res) => {
 // GET /api/dealers/:phoneNumber/payment-log
 exports.getDealerPaymentLog = async (req, res) => {
     try {
-        const result = await dealerService.getDealerPaymentLog(req.params.phoneNumber);
+        const result = await dealerService.getDealerPaymentLog(req.params.phoneNumber, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, error: error.message });
@@ -49,7 +49,8 @@ exports.getDealerProjectPaymentLog = async (req, res) => {
     try {
         const result = await dealerService.getDealerProjectPaymentLog(
             req.params.phoneNumber,
-            req.params.projectNo
+            req.params.projectNo,
+            req.tenantId
         );
         res.status(200).json({ success: true, data: result });
     } catch (error) {
@@ -70,7 +71,8 @@ exports.payDealerProjectPayment = async (req, res) => {
             projectNo,
             amount,
             method,
-            bankId   // 🔥 IMPORTANT
+            bankId,   // 🔥 IMPORTANT
+            req.tenantId
         );
 
         res.status(200).json({
@@ -96,7 +98,8 @@ exports.updateDealerPayment = async (req, res) => {
     try {
         const result = await dealerService.updateDealerPayment(
             req.params.phoneNumber,
-            req.body.amountPaid
+            req.body.amountPaid,
+            req.tenantId
         );
         res.status(200).json({ success: true, data: result });
     } catch (error) {
@@ -108,7 +111,7 @@ exports.updateDealerPayment = async (req, res) => {
 // DELETE /api/dealers/:phoneNumber
 exports.deleteDealer = async (req, res) => {
     try {
-        const result = await dealerService.deleteDealer(req.params.phoneNumber);
+        const result = await dealerService.deleteDealer(req.params.phoneNumber, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, error: error.message });

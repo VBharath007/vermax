@@ -2,6 +2,14 @@ const { db } = require("../../config/firebase");
 const { LABOUR_MASTERS, SUB_LABOUR_TYPES } = require("../../models/firestore.collections");
 const dayjs = require("dayjs");
 
+/**
+ * 🛡️ Safe tenant check.
+ * Returns true when the request has NO specific tenant scope.
+ * Treats undefined, null, empty string, and "GLOBAL" all as global.
+ * This prevents Firestore crashing with undefined in .where() queries.
+ */
+const isGlobal = (tenant_id) => !tenant_id || tenant_id === "GLOBAL";
+
 const banksCollection = db.collection("banks");
 const labourMasterCollection = db.collection(LABOUR_MASTERS);
 const subLabourTypeCollection = db.collection(SUB_LABOUR_TYPES);
@@ -44,21 +52,32 @@ exports.initDefaultSubLabourTypes = async () => {
 };
 
 // ─── Head Labour Master CRUD ────────────────────────────────────────────────
-exports.addLabourMaster = async (data) => {
+exports.addLabourMaster = async (data, tenant_id) => {
     if (!data.name) throw new Error("name is required");
+    if (!tenant_id) throw new Error("tenant_id is required");
     const normalizedName = data.name.trim().toUpperCase();
-    const existing = await labourMasterCollection.where("name", "==", normalizedName).limit(1).get();
+    const existing = await labourMasterCollection
+        .where("tenant_id", "==", tenant_id)
+        .where("name", "==", normalizedName)
+        .limit(1).get();
     if (!existing.empty) throw new Error(`Head labour '${normalizedName}' already exists`);
 
-    const newLabour = { name: normalizedName, contact: data.contact || "N/A", createdAt: now() };
+    const newLabour = { 
+        name: normalizedName, 
+        contact: data.contact || "N/A", 
+        tenant_id,
+        createdAt: now() 
+    };
     const docRef = await labourMasterCollection.add(newLabour);
     return { id: docRef.id, ...newLabour };
 };
 
-exports.updateLabourMaster = async (id, data) => {
+exports.updateLabourMaster = async (id, data, tenant_id) => {
     const docRef = labourMasterCollection.doc(id);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Head labour master not found");
+    if (doc.data().tenant_id !== tenant_id && !isGlobal(tenant_id)) throw new Error("Unauthorized");
+    
     const updateData = { ...data, updatedAt: now() };
     if (updateData.name) updateData.name = updateData.name.trim().toUpperCase();
     await docRef.update(updateData);
@@ -66,10 +85,11 @@ exports.updateLabourMaster = async (id, data) => {
     return { id, ...updated.data() };
 };
 
-exports.deleteLabourMaster = async (id) => {
+exports.deleteLabourMaster = async (id, tenant_id) => {
     const docRef = labourMasterCollection.doc(id);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Head labour master not found");
+    if (doc.data().tenant_id !== tenant_id && !isGlobal(tenant_id)) throw new Error("Unauthorized");
 
     // ── 1. Fetch related records ─────────────────────────────────────────────
     const [paymentSnap, workSnap] = await Promise.all([
@@ -82,6 +102,7 @@ exports.deleteLabourMaster = async (id) => {
     // ── 2. Process Payments & Mirrored Expenses ──────────────────────────────
     for (const pDoc of paymentSnap.docs) {
         const pData = pDoc.data();
+        if (pData.tenant_id !== tenant_id && !isGlobal(tenant_id)) continue;
         
         // Bank Reversal
         if (pData.method === "bank" && pData.bankId && (Number(pData.amountPaid) || 0) > 0) {
@@ -96,6 +117,7 @@ exports.deleteLabourMaster = async (id) => {
     // ── 3. Process Work Logs (Remove participation) ──────────────────────────
     for (const wDoc of workSnap.docs) {
         const wData = wDoc.data();
+        if (wData.tenant_id !== tenant_id && !isGlobal(tenant_id)) continue;
         if (wData.labourDetails && wData.labourDetails[id]) {
             const updatedDetails = { ...wData.labourDetails };
             delete updatedDetails[id];
@@ -120,24 +142,45 @@ exports.deleteLabourMaster = async (id) => {
     };
 };
 
-exports.getLabourMasters = async () => {
-    const snap = await labourMasterCollection.orderBy("name", "asc").get();
-    return snap.docs.map(doc => {
-        const data = doc.data();
-        return { id: doc.id, ...data, createdAt: formatDate(data.createdAt), updatedAt: formatDate(data.updatedAt) };
-    });
+exports.getLabourMasters = async (tenant_id) => {
+    try {
+        let query = labourMasterCollection;
+        if (!isGlobal(tenant_id)) {
+            query = query.where("tenant_id", "==", tenant_id);
+        }
+        console.log(`🔍 getLabourMasters called with tenant_id="${tenant_id}", isGlobal=${isGlobal(tenant_id)}`);
+        const snap = await query.get();
+        console.log(`✅ getLabourMasters fetched ${snap.size} docs`);
+        const results = snap.docs.map(doc => {
+            const data = doc.data();
+            return { id: doc.id, ...data, createdAt: formatDate(data.createdAt), updatedAt: formatDate(data.updatedAt) };
+        });
+        // Sort in memory to avoid Firestore requiring a composite index
+        results.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        return results;
+    } catch (err) {
+        console.error("❌ getLabourMasters Firestore ERROR:", err.message);
+        console.error("   Code:", err.code);
+        throw err;
+    }
 };
 
-exports.getLabourMasterById = async (id) => {
+
+exports.getLabourMasterById = async (id, tenant_id) => {
     const doc = await labourMasterCollection.doc(id).get();
     if (!doc.exists) throw new Error("Head labour master not found");
+    if (doc.data().tenant_id !== tenant_id && !isGlobal(tenant_id)) throw new Error("Unauthorized");
     const data = doc.data();
     return { id: doc.id, ...data, createdAt: formatDate(data.createdAt), updatedAt: formatDate(data.updatedAt) };
 };
 
-exports.getLabourMasterByName = async (name) => {
+exports.getLabourMasterByName = async (name, tenant_id) => {
     const normalized = name.trim().toUpperCase();
-    const snap = await labourMasterCollection.where("name", "==", normalized).limit(1).get();
+    let query = labourMasterCollection.where("name", "==", normalized).limit(1);
+    if (!isGlobal(tenant_id)) {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snap = await query.get();
     if (snap.empty) throw new Error(`Head labour '${normalized}' not found`);
     const doc = snap.docs[0];
     const data = doc.data();
@@ -222,12 +265,14 @@ async function _syncLabourPaymentToSiteExpense(paymentId, payment) {
         paymentId,                                        // back-reference
         createdAt:         payment.createdAt || new Date().toISOString(),
         updatedAt:         payment.updatedAt || null,
+        tenant_id:         payment.tenant_id
     }, { merge: true });
 }
 
-exports.recordLabourPayment = async (labourId, projectNo, data) => {
+exports.recordLabourPayment = async (labourId, projectNo, data, tenant_id) => {
     const { amount, method = "cash", bankId, fromDate, toDate, remark = "" } = data;
     if (!amount || Number(amount) <= 0) throw new Error("Valid amount is required");
+    if (!tenant_id) throw new Error("tenant_id is required");
 
     const paymentAmount = Number(amount);
     const paymentMethod = method.toLowerCase();
@@ -235,6 +280,7 @@ exports.recordLabourPayment = async (labourId, projectNo, data) => {
     const labourDoc = await labourMasterCollection.doc(labourId).get();
     if (!labourDoc.exists) throw new Error("Labour not found");
     const labourData = labourDoc.data();
+    if (labourData.tenant_id !== tenant_id && !isGlobal(tenant_id)) throw new Error("Unauthorized");
 
     let bankData = null;
     let bankTransactionId = null;
@@ -244,6 +290,7 @@ exports.recordLabourPayment = async (labourId, projectNo, data) => {
         if (!bankId) throw new Error("bankId is required for bank payments");
         const bankDoc = await banksCollection.doc(bankId).get();
         if (!bankDoc.exists) throw new Error("Bank not found");
+        if (bankDoc.data().tenant_id !== tenant_id && !isGlobal(tenant_id)) throw new Error("Unauthorized");
 
         bankData = bankDoc.data();
         const currentBalance = Number(bankData.currentBalance || 0);
@@ -266,6 +313,7 @@ exports.recordLabourPayment = async (labourId, projectNo, data) => {
             createdAt: new Date().toISOString(),
             relatedLabour: labourId,
             relatedProject: projectNo,
+            tenant_id
         });
         bankTransactionId = txnRef.id;
     }
@@ -285,6 +333,7 @@ exports.recordLabourPayment = async (labourId, projectNo, data) => {
         remark,
         date: new Date().toISOString(),
         createdAt: now(),
+        tenant_id
     };
 
     const ref = await labourPaymentsCollection.add(payment);
@@ -300,11 +349,14 @@ exports.recordLabourPayment = async (labourId, projectNo, data) => {
     return { id: ref.id, ...payment };
 };
 
-exports.getLabourPaymentsByProject = async (labourId, projectNo) => {
-    const snap = await labourPaymentsCollection
+exports.getLabourPaymentsByProject = async (labourId, projectNo, tenant_id) => {
+    let query = labourPaymentsCollection
         .where("labourId", "==", labourId)
-        .where("projectNo", "==", projectNo)
-        .get();
+        .where("projectNo", "==", projectNo);
+    if (!isGlobal(tenant_id)) {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snap = await query.get();
     const payments = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
         .sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -312,8 +364,12 @@ exports.getLabourPaymentsByProject = async (labourId, projectNo) => {
     return { payments, totalPaid, count: payments.length };
 };
 
-exports.getLabourPayments = async (labourId) => {
-    const snap = await labourPaymentsCollection.where("labourId", "==", labourId).get();
+exports.getLabourPayments = async (labourId, tenant_id) => {
+    let query = labourPaymentsCollection.where("labourId", "==", labourId);
+    if (!isGlobal(tenant_id)) {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snap = await query.get();
     const payments = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
         .sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -321,16 +377,18 @@ exports.getLabourPayments = async (labourId) => {
     return { payments, totalPaid, count: payments.length };
 };
 
-exports.getPaymentById = async (paymentId) => {
+exports.getPaymentById = async (paymentId, tenant_id) => {
     const doc = await labourPaymentsCollection.doc(paymentId).get();
     if (!doc.exists) throw new Error("Payment not found");
+    if (doc.data().tenant_id !== tenant_id && !isGlobal(tenant_id)) throw new Error("Unauthorized");
     return { id: doc.id, ...doc.data() };
 };
 
-exports.updateLabourPayment = async (paymentId, data) => {
+exports.updateLabourPayment = async (paymentId, data, tenant_id) => {
     const docRef = labourPaymentsCollection.doc(paymentId);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Payment not found");
+    if (doc.data().tenant_id !== tenant_id && !isGlobal(tenant_id)) throw new Error("Unauthorized");
 
     const updateData = { updatedAt: now() };
     if (data.amount   !== undefined) updateData.amountPaid = Number(data.amount);
@@ -354,12 +412,13 @@ exports.updateLabourPayment = async (paymentId, data) => {
     return finalPayment;
 };
 
-exports.deleteLabourPayment = async (paymentId) => {
+exports.deleteLabourPayment = async (paymentId, tenant_id) => {
     const docRef = labourPaymentsCollection.doc(paymentId);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Payment not found");
-
     const data = doc.data();
+    if (data.tenant_id !== tenant_id && !isGlobal(tenant_id)) throw new Error("Unauthorized");
+
 
     // ── 1. Bank Reversal ───────────────────────────────────────────────────
     if (data.method === "bank" && data.bankId && (Number(data.amountPaid) || 0) > 0) {

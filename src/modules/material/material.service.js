@@ -100,28 +100,38 @@ async function _deleteMaterialExpense(receiptId) {
 
 // ─── Material Master ──────────────────────────────────────────────────────────
 
-exports.createMaterial = async (materialData) => {
+exports.createMaterial = async (materialData, tenant_id) => {
     if (!materialData.materialId) throw new Error("materialId is required");
+    if (!tenant_id) throw new Error("tenant_id is required");
     const docRef = materialsCollection.doc(materialData.materialId);
     const doc = await docRef.get();
     if (doc.exists) throw new Error("Material with this materialId already exists");
+    
+    materialData.tenant_id = tenant_id;
     await docRef.set(materialData);
     return materialData;
 };
 
-exports.getMaterials = async () => {
-    const snapshot = await materialsCollection.orderBy("materialName", "asc").get();
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+exports.getMaterials = async (tenant_id) => {
+    let query = materialsCollection;
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
+    const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    results.sort((a, b) => (a.materialName || "").localeCompare(b.materialName || ""));
+    return results;
 };
 
 // ─── Material Received ────────────────────────────────────────────────────────
 
-exports.recordMaterialReceived = async (receivedData) => {
+exports.recordMaterialReceived = async (receivedData, tenant_id) => {
     const normalizedId = receivedData.materialId ? receivedData.materialId.trim().toUpperCase() : null;
     const normalizedName = receivedData.materialName ? receivedData.materialName.trim().toUpperCase() : null;
 
     if (!receivedData.projectNo || !normalizedId) throw new Error("projectNo and materialId are required");
     if (!normalizedName) throw new Error("materialName is required");
+    if (!tenant_id) throw new Error("tenant_id is required");
 
     // Ensure material exists in master list
     const matRef = materialsCollection.doc(normalizedId);
@@ -167,7 +177,8 @@ exports.recordMaterialReceived = async (receivedData) => {
         bankId: receivedData.bankId || null,
         bankName: null,
         bankTransactionId: null,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        tenant_id
     };
 
     const docRef = await materialReceivedCollection.add(finalData);
@@ -189,7 +200,8 @@ exports.recordMaterialReceived = async (receivedData) => {
             receivedQuantity: quantity,
             usedQuantity: 0,
             stock: quantity,
-            createdAt: receiptDate
+            createdAt: receiptDate,
+            tenant_id
         });
     }
 
@@ -220,9 +232,12 @@ exports.recordMaterialReceived = async (receivedData) => {
     return { receiptId, ...finalData };
 };
 
-exports.getMaterialReceived = async (projectNo) => {
+exports.getMaterialReceived = async (projectNo, tenant_id) => {
     let query = materialReceivedCollection;
     if (projectNo) query = query.where("projectNo", "==", projectNo);
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
     
     // Fetch first, then sort in memory to avoid needing a Firestore composite index
     const snapshot = await query.get();
@@ -232,18 +247,22 @@ exports.getMaterialReceived = async (projectNo) => {
     return data;
 };
 
-exports.getMaterialReceivedByMaterialId = async (materialId) => {
-    const snapshot = await materialReceivedCollection
-        .where("materialId", "==", materialId).get();
+exports.getMaterialReceivedByMaterialId = async (materialId, tenant_id) => {
+    let query = materialReceivedCollection.where("materialId", "==", materialId);
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
     if (snapshot.empty) throw new Error(`No received records found for material ID '${materialId}'`);
     return snapshot.docs.map(doc => ({ receiptId: doc.id, ...doc.data() }));
 };
 
-exports.updateReceiptPayment = async (receiptId, paymentData) => {
+exports.updateReceiptPayment = async (receiptId, paymentData, tenant_id) => {
     const docRef = materialReceivedCollection.doc(receiptId);
     const doc = await docRef.get();
 
     if (!doc.exists) throw new Error("Material received record not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const existingData = doc.data();
 
@@ -411,10 +430,11 @@ async function handleBankTransaction({
     };
 }   
 
-exports.updateMaterialReceived = async (receiptId, updateData) => {
+exports.updateMaterialReceived = async (receiptId, updateData, tenant_id) => {
     const docRef = materialReceivedCollection.doc(receiptId);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Material received record not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const oldData = doc.data();
     const oldQty = Number(oldData.quantity) || 0;
@@ -537,10 +557,11 @@ exports.updateMaterialReceived = async (receiptId, updateData) => {
     return { receiptId: updatedDoc.id, ...updatedDoc.data() };
 };
 
-exports.deleteMaterialReceived = async (receiptId) => {
+exports.deleteMaterialReceived = async (receiptId, tenant_id) => {
     const docRef = materialReceivedCollection.doc(receiptId);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Receipt not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const data = doc.data();
     const quantity = Number(data.quantity) || 0;
@@ -578,11 +599,12 @@ exports.deleteMaterialReceived = async (receiptId) => {
 // ─── Material Used ────────────────────────────────────────────────────────────
 
 // ✅ FIX 1+2: Only ONE definition, receiptDate replaced with usedDate
-exports.recordMaterialUsed = async (usedData) => {
+exports.recordMaterialUsed = async (usedData, tenant_id) => {
     const normalizedId = usedData.materialId ? usedData.materialId.trim().toUpperCase() : null;
 
     if (!usedData.projectNo || !normalizedId)
         throw new Error("projectNo and materialId are required");
+    if (!tenant_id) throw new Error("tenant_id is required");
 
     const qtyUsed = Number(usedData.quantityUsed) || 0;
     const stockId = `${usedData.projectNo}_${normalizedId}`;
@@ -611,6 +633,7 @@ exports.recordMaterialUsed = async (usedData) => {
         materialName: currentStock.materialName,
         quantityUsed: qtyUsed,
         createdAt: usedDate,
+        tenant_id
     };
 
     const docRef = await materialUsedCollection.add(finalUsedData);
@@ -624,10 +647,11 @@ exports.recordMaterialUsed = async (usedData) => {
     return { usageId: docRef.id, ...finalUsedData };
 };
 
-exports.deleteMaterialUsed = async (usageId) => {
+exports.deleteMaterialUsed = async (usageId, tenant_id) => {
     const docRef = materialUsedCollection.doc(usageId);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Material used record not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const data = doc.data();
     const qtyUsed = Number(data.quantityUsed) || 0;
@@ -647,10 +671,11 @@ exports.deleteMaterialUsed = async (usageId) => {
     return { message: "Material used record deleted and stock restored", usageId };
 };
 
-exports.updateMaterialUsed = async (usageId, updateData) => {
+exports.updateMaterialUsed = async (usageId, updateData, tenant_id) => {
     const docRef = materialUsedCollection.doc(usageId);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Material used record not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const existingData = doc.data();
     const oldQtyUsed = Number(existingData.quantityUsed) || 0;
@@ -693,21 +718,26 @@ exports.updateMaterialUsed = async (usageId, updateData) => {
 
 // ─── Material Stock ───────────────────────────────────────────────────────────
 
-exports.getMaterialStock = async (projectNo) => {
-    let snap;
+exports.getMaterialStock = async (projectNo, tenant_id) => {
+    let query = stockCollection;
     if (projectNo) {
-        snap = await stockCollection.where("projectNo", "==", projectNo).orderBy("materialName", "asc").get();
-    } else {
-        snap = await stockCollection.orderBy("materialName", "asc").get();
+        query = query.where("projectNo", "==", projectNo);
     }
-    return snap.docs.map(doc => doc.data());
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snap = await query.get();
+    const results = snap.docs.map(doc => doc.data());
+    results.sort((a, b) => (a.materialName || "").localeCompare(b.materialName || ""));
+    return results;
 };
 
 // ─── Material Required ────────────────────────────────────────────────────────
 
-exports.addMaterialRequired = async (data) => {
+exports.addMaterialRequired = async (data, tenant_id) => {
     if (!data.projectNo || !data.materialId) throw new Error("projectNo and materialId are required");
     if (!data.materialName) throw new Error("materialName is required");
+    if (!tenant_id) throw new Error("tenant_id is required");
 
     const qty = Number(data.requiredQuantity) || 0;
     if (qty <= 0) throw new Error("requiredQuantity must be a positive number");
@@ -732,6 +762,7 @@ exports.addMaterialRequired = async (data) => {
         newRequiredQuantity = qty;
         data.createdAt = new Date().toISOString();
         data.requiredQuantity = qty;
+        data.tenant_id = tenant_id;
         const docRef = await materialRequiredCollection.add(data);
         requiredDocId = docRef.id;
     }
@@ -745,8 +776,12 @@ exports.addMaterialRequired = async (data) => {
     };
 };
 
-exports.getAllMaterialRequired = async () => {
-    const snap = await materialRequiredCollection.get();
+exports.getAllMaterialRequired = async (tenant_id) => {
+    let query = materialRequiredCollection;
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snap = await query.get();
     return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 };
 
@@ -754,15 +789,18 @@ exports.getAllMaterialRequired = async () => {
  * Get all material required entries for a project
  * GET /api/materials/required?projectNo=VVP010
  */
-exports.getMaterialRequired = async (projectNo) => {
+exports.getMaterialRequired = async (projectNo, tenant_id) => {
     if (!projectNo) {
         throw new Error("projectNo is required");
     }
 
+    let query = materialRequiredCollection.where("projectNo", "==", projectNo);
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+
     // Fetch first, then sort in memory to avoid needing a Firestore composite index
-    const snapshot = await materialRequiredCollection
-        .where("projectNo", "==", projectNo)
-        .get();
+    const snapshot = await query.get();
 
     if (snapshot.empty) {
         return [];
@@ -790,10 +828,11 @@ exports.getMaterialRequired = async (projectNo) => {
  *   - Create transaction in banks/{bankId}/transactions subcollection
  *   - Save to materialAdvances collection
  */
-exports.createMaterialAdvance = async (advanceData) => {
+exports.createMaterialAdvance = async (advanceData, tenant_id) => {
     if (!advanceData.projectNo) {
         throw new Error("projectNo is required");
     }
+    if (!tenant_id) throw new Error("tenant_id is required");
     
     if (!advanceData.amountAdvance) {
         throw new Error("amountAdvance is required");
@@ -875,6 +914,7 @@ exports.createMaterialAdvance = async (advanceData) => {
     }
 
     // 3. Save advance record to materialAdvances collection
+    advanceData.tenant_id = tenant_id;
     const docRef = await materialAdvancesCollection.add(advanceData);
 
     // 4. If BANK payment, update transaction with advance ID reference
@@ -894,12 +934,15 @@ exports.createMaterialAdvance = async (advanceData) => {
 /**
  * Get all material advances for a project or globally
  */
-exports.getMaterialAdvances = async (projectNo) => {
+exports.getMaterialAdvances = async (projectNo, tenant_id) => {
     let query = materialAdvancesCollection;
     if (projectNo) {
         query = query.where("projectNo", "==", projectNo);
     }
-    const snapshot = await query.orderBy("createdAt", "desc").get();
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
     const advances = [];
     let totalProjectAmount = 0;
 
@@ -920,6 +963,9 @@ exports.getMaterialAdvances = async (projectNo) => {
         });
     });
 
+    // Sort in memory: newest first (createdAt descending)
+    advances.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
     return {
         advances,
         totalAdvance: totalProjectAmount
@@ -930,12 +976,13 @@ exports.getMaterialAdvances = async (projectNo) => {
  * Update a material advance record
  * If amount or paymentMethod changes, update bank balance and transactions accordingly
  */
-exports.updateMaterialAdvance = async (id, updateData) => {
+exports.updateMaterialAdvance = async (id, updateData, tenant_id) => {
     const docRef = materialAdvancesCollection.doc(id);
     const doc = await docRef.get();
     if (!doc.exists) {
         throw new Error("Material advance record not found");
     }
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const existingData = doc.data();
 
@@ -1104,12 +1151,13 @@ exports.updateMaterialAdvance = async (id, updateData) => {
  * Delete a material advance record
  * If paymentMethod was BANK, revert the bank balance and create reverse transaction
  */
-exports.deleteMaterialAdvance = async (id) => {
+exports.deleteMaterialAdvance = async (id, tenant_id) => {
     const docRef = materialAdvancesCollection.doc(id);
     const doc = await docRef.get();
     if (!doc.exists) {
         throw new Error("Material advance record not found");
     }
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const advanceData = doc.data();
 
@@ -1168,13 +1216,14 @@ exports.deleteMaterialAdvance = async (id) => {
  * 
  * Body: { requiredQuantity?, materialName?, remark? }
  */
-exports.updateMaterialRequired = async (requiredId, updateData) => {
+exports.updateMaterialRequired = async (requiredId, updateData, tenant_id) => {
     const docRef = materialRequiredCollection.doc(requiredId);
     const doc = await docRef.get();
     
     if (!doc.exists) {
         throw new Error("Material required record not found");
     }
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const cleanData = {};
     
@@ -1212,13 +1261,14 @@ exports.updateMaterialRequired = async (requiredId, updateData) => {
  * Delete a material required record
  * DELETE /api/materials/required/:requiredId
  */
-exports.deleteMaterialRequired = async (requiredId) => {
+exports.deleteMaterialRequired = async (requiredId, tenant_id) => {
     const docRef = materialRequiredCollection.doc(requiredId);
     const doc = await docRef.get();
     
     if (!doc.exists) {
         throw new Error("Material required record not found");
     }
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const data = doc.data();
 
@@ -1237,11 +1287,17 @@ exports.deleteMaterialRequired = async (requiredId) => {
 /**
  * Get bank transaction history for a specific bank (used by advance service)
  */
-exports.getBankTransactionHistoryForMaterialAdvance = async (bankId) => {
+exports.getBankTransactionHistoryForMaterialAdvance = async (bankId, tenant_id) => {
     try {
-        const snapshot = await banksCollection
-            .doc(bankId)
-            .collection("transactions")
+        let query = banksCollection.doc(bankId).collection("transactions");
+        // We cannot filter easily here if transactions don't store tenant_id 
+        // But the bankId itself is scoped. We can just verify the bank belongs to the tenant.
+        const bankDoc = await banksCollection.doc(bankId).get();
+        if (bankDoc.exists && tenant_id && tenant_id !== 'GLOBAL' && bankDoc.data().tenant_id !== tenant_id) {
+            throw new Error("Unauthorized");
+        }
+
+        const snapshot = await query
             .orderBy("createdAt", "desc")
             .get();
 

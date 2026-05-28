@@ -21,7 +21,7 @@ process.on("uncaughtException", (err) => {
 });
 // ──────────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, async () => {
+app.listen(PORT, '0.0.0.0', async () => {
     console.log(`🚀 Server running on port ${PORT}`);
 
     // Call createDefaultAdmin explicitly and catch any errors.

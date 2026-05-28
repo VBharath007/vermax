@@ -8,7 +8,7 @@ const { WORKS } = require("../../models/firestore.collections");
 
 exports.createWork = async (req, res, next) => {
     try {
-        const result = await workService.createWork(req.body);
+        const result = await workService.createWork(req.body, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -18,7 +18,7 @@ exports.createWork = async (req, res, next) => {
 exports.getWorks = async (req, res, next) => {
     try {
         const projectNo = req.params.projectNo || req.query.projectNo;
-        const result = await workService.getWorks(projectNo);
+        const result = await workService.getWorks(projectNo, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -28,7 +28,7 @@ exports.getWorks = async (req, res, next) => {
 exports.getWorkById = async (req, res, next) => {
     try {
         const { workId, projectNo } = req.params;
-        const result = await workService.getWorkById(workId, projectNo);
+        const result = await workService.getWorkById(workId, projectNo, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(404).json({ success: false, message: error.message });
@@ -38,7 +38,7 @@ exports.getWorkById = async (req, res, next) => {
 
 exports.updateWork = async (req, res, next) => {
     try {
-        const result = await workService.updateWork(req.params.workId, req.body);
+        const result = await workService.updateWork(req.params.workId, req.body, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -47,7 +47,7 @@ exports.updateWork = async (req, res, next) => {
 
 exports.deleteWork = async (req, res, next) => {
     try {
-        const result = await workService.deleteWork(req.params.workId);
+        const result = await workService.deleteWork(req.params.workId, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -62,7 +62,7 @@ exports.getWorkByDate = async (req, res) => {
             return res.status(400).json({ success: false, message: "projectNo and date are required" });
         }
 
-        const result = await workService.getWorkByDate(projectNo, date);
+        const result = await workService.getWorkByDate(projectNo, date, req.tenantId);
 
         // If result is empty, we still return success: true but with an empty list
         res.status(200).json({ success: true, data: result });
@@ -83,7 +83,7 @@ exports.getWorksByWeek = async (req, res) => {
             });
         }
 
-        const result = await workService.getWorksByWeek(projectNo, from, to);
+        const result = await workService.getWorksByWeek(projectNo, from, to, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -131,7 +131,7 @@ exports.assignLabourToWork = async (req, res) => {
         }
 
         const result = await workService.assignLabourToWork(
-            projectNo, workId, headLabourId, subLabourDetails
+            projectNo, workId, headLabourId, subLabourDetails, req.tenantId
         );
         res.status(200).json({ success: true, data: result });
     } catch (error) {
@@ -153,7 +153,7 @@ exports.updateSubLabourForWork = async (req, res) => {
         }
 
         const result = await workService.updateSubLabourForWork(
-            projectNo, workId, labourId, subLabourDetails
+            projectNo, workId, labourId, subLabourDetails, req.tenantId
         );
         res.status(200).json({ success: true, data: result });
     } catch (error) {
@@ -170,7 +170,7 @@ exports.updateSubLabourForWork = async (req, res) => {
 exports.getLabourByProject = async (req, res) => {
     try {
         const { projectNo } = req.params;
-        const works = await workService.getWorks(projectNo);
+        const works = await workService.getWorks(projectNo, req.tenantId);
 
         const labourMap = {};
 
@@ -233,7 +233,7 @@ exports.getLabourByProject = async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 exports.getAllLabour = async (req, res) => {
     try {
-        const works = await workService.getWorks(); // null means all projects
+        const works = await workService.getWorks(null, req.tenantId); // null means all projects
 
         const labourMap = {};
 
@@ -302,7 +302,7 @@ exports.editSubLabourCount = async (req, res) => {
             return res.status(400).json({ success: false, message: "'count' is required in body" });
         }
 
-        const result = await workService.editSubLabourCount(projectNo, workId, labourId, type, count);
+        const result = await workService.editSubLabourCount(projectNo, workId, labourId, type, count, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -316,7 +316,7 @@ exports.editSubLabourCount = async (req, res) => {
 exports.deleteSubLabourType = async (req, res) => {
     try {
         const { projectNo, workId, labourId, type } = req.params;
-        const result = await workService.deleteSubLabourType(projectNo, workId, labourId, type);
+        const result = await workService.deleteSubLabourType(projectNo, workId, labourId, type, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -338,7 +338,7 @@ exports.getWorksByWeek = async (req, res) => {
             });
         }
 
-        const result = await workService.getWorksByWeek(projectNo, from, to);
+        const result = await workService.getWorksByWeek(projectNo, from, to, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -351,7 +351,7 @@ exports.getWorksByWeek = async (req, res) => {
 exports.getWorksByLabour = async (req, res) => {
     try {
         const { labourId } = req.params;
-        const result = await workService.getWorksByLabour(labourId);
+        const result = await workService.getWorksByLabour(labourId, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -370,7 +370,7 @@ exports.updateWorkDate = async (req, res) => {
         const { projectNo, workId } = req.params;
         const { date } = req.body;
 
-        const result = await workService.updateWorkDate(projectNo, workId, date);
+        const result = await workService.updateWorkDate(projectNo, workId, date, req.tenantId);
         res.status(200).json({
             success: true,
             message: "Work date updated successfully",

@@ -5,8 +5,12 @@ const banksCollection = db.collection("banks");
 // ─────────────────────────────────────────────
 // 📊 GET ALL BANKS + TOTALS
 // ─────────────────────────────────────────────
-exports.getAllBanksWithSummary = async () => {
-  const snapshot = await banksCollection.get();
+exports.getAllBanksWithSummary = async (tenant_id) => {
+  let query = banksCollection;
+  if (tenant_id && tenant_id !== 'GLOBAL') {
+    query = query.where("tenant_id", "==", tenant_id);
+  }
+  const snapshot = await query.get();
 
   let banks = [];
   let totalOpening = 0;
@@ -39,9 +43,10 @@ exports.getAllBanksWithSummary = async () => {
 // ─────────────────────────────────────────────
 // 🏦 GET SINGLE BANK
 // ─────────────────────────────────────────────
-exports.getBankById = async (bankId) => {
+exports.getBankById = async (bankId, tenant_id) => {
   const doc = await banksCollection.doc(bankId).get();
   if (!doc.exists) throw new Error("Bank not found");
+  if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
   return { id: doc.id, ...doc.data() };
 };
@@ -49,7 +54,11 @@ exports.getBankById = async (bankId) => {
 // ─────────────────────────────────────────────
 // 📜 GET BANK TRANSACTIONS
 // ─────────────────────────────────────────────
-exports.getBankTransactions = async (bankId) => {
+exports.getBankTransactions = async (bankId, tenant_id) => {
+  const doc = await banksCollection.doc(bankId).get();
+  if (!doc.exists) throw new Error("Bank not found");
+  if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
+
   const snapshot = await banksCollection
     .doc(bankId)
     .collection("transactions")
@@ -71,7 +80,7 @@ exports.getBankTransactions = async (bankId) => {
 // ─────────────────────────────────────────────
 // ➕ CREATE BANK
 // ─────────────────────────────────────────────
-exports.createBank = async (data) => {
+exports.createBank = async (data, tenant_id) => {
   if (!data) {
     throw new Error("Request data is required");
   }
@@ -85,6 +94,7 @@ exports.createBank = async (data) => {
   if (!bankName || !accountNumber) {
     throw new Error("Bank name and account number are required");
   }
+  if (!tenant_id) throw new Error("tenant_id is required");
 
   const newBankRef = await banksCollection.add({
     bankName,
@@ -93,6 +103,7 @@ exports.createBank = async (data) => {
     currentBalance: Number(openingBalance),
     closingBalance: Number(openingBalance),
     createdAt: new Date().toISOString(),
+    tenant_id
   });
 
   const newDoc = await newBankRef.get();
@@ -105,8 +116,12 @@ exports.createBank = async (data) => {
 
 
 
-exports.getGlobalTransactions = async () => {
-    const snapshot = await banksCollection.get();
+exports.getGlobalTransactions = async (tenant_id) => {
+    let query = banksCollection;
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
 
     let allTransactions = [];
     let totalCurrentBalance = 0;
@@ -179,10 +194,11 @@ exports.getGlobalTransactions = async () => {
 // ─────────────────────────────────────────────
 // ✏️ UPDATE BANK DETAILS
 // ─────────────────────────────────────────────
-exports.updateBank = async (bankId, data) => {
+exports.updateBank = async (bankId, data, tenant_id) => {
   const ref = banksCollection.doc(bankId);
   const doc = await ref.get();
   if (!doc.exists) throw new Error("Bank not found");
+  if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
   const { bankName, accountNumber, openingBalance } = data;
 
@@ -259,10 +275,11 @@ exports.updateBank = async (bankId, data) => {
 // ─────────────────────────────────────────────
 // ✏️ UPDATE TRANSACTION
 // ─────────────────────────────────────────────
-exports.updateTransaction = async (bankId, txId, data) => {
+exports.updateTransaction = async (bankId, txId, data, tenant_id) => {
   const bankRef = banksCollection.doc(bankId);
   const bankDoc = await bankRef.get();
   if (!bankDoc.exists) throw new Error("Bank not found");
+  if (tenant_id && tenant_id !== 'GLOBAL' && bankDoc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
   const txRef = bankRef.collection("transactions").doc(txId);
   const txDoc = await txRef.get();
@@ -308,10 +325,11 @@ exports.updateTransaction = async (bankId, txId, data) => {
 // ─────────────────────────────────────────────
 // 🗑️ DELETE BANK
 // ─────────────────────────────────────────────
-exports.deleteBank = async (bankId) => {
+exports.deleteBank = async (bankId, tenant_id) => {
   const bankRef = banksCollection.doc(bankId);
   const bankDoc = await bankRef.get();
   if (!bankDoc.exists) throw new Error("Bank not found");
+  if (tenant_id && tenant_id !== 'GLOBAL' && bankDoc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
   // Delete all transactions in subcollection
   const txSnapshot = await bankRef.collection("transactions").get();
@@ -334,10 +352,11 @@ exports.deleteBank = async (bankId) => {
 // ─────────────────────────────────────────────
 // 🗑️ DELETE TRANSACTION
 // ─────────────────────────────────────────────
-exports.deleteTransaction = async (bankId, txId) => {
+exports.deleteTransaction = async (bankId, txId, tenant_id) => {
   const bankRef = banksCollection.doc(bankId);
   const bankDoc = await bankRef.get();
   if (!bankDoc.exists) throw new Error("Bank not found");
+  if (tenant_id && tenant_id !== 'GLOBAL' && bankDoc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
   const txRef = bankRef.collection("transactions").doc(txId);
   const txDoc = await txRef.get();

@@ -8,7 +8,7 @@ exports.addMasterLabour = async (req, res) => {
         if (!req.body.name) {
             return res.status(400).json({ error: "name is required" });
         }
-        const result = await labourService.addLabourMaster(req.body);
+        const result = await labourService.addLabourMaster(req.body, req.tenantId);
         res.status(201).json(result);
     } catch (error) {
         res.status(400).json({ error: error.message });
@@ -19,7 +19,7 @@ exports.addMasterLabour = async (req, res) => {
 
 exports.updateMasterLabour = async (req, res) => {
     try {
-        const result = await labourService.updateLabourMaster(req.params.id, req.body);
+        const result = await labourService.updateLabourMaster(req.params.id, req.body, req.tenantId);
         res.json(result);
     } catch (error) {
         res.status(400).json({ error: error.message });
@@ -28,7 +28,7 @@ exports.updateMasterLabour = async (req, res) => {
 
 exports.deleteMasterLabour = async (req, res) => {
     try {
-        const result = await labourService.deleteLabourMaster(req.params.id);
+        const result = await labourService.deleteLabourMaster(req.params.id, req.tenantId);
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -37,7 +37,7 @@ exports.deleteMasterLabour = async (req, res) => {
 
 exports.getAllHeadLabours = async (req, res) => {
     try {
-        const result = await labourService.getLabourMasters();
+        const result = await labourService.getLabourMasters(req.tenantId);
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -46,7 +46,7 @@ exports.getAllHeadLabours = async (req, res) => {
 
 exports.getHeadLabourById = async (req, res) => {
     try {
-        const result = await labourService.getLabourMasterById(req.params.id);
+        const result = await labourService.getLabourMasterById(req.params.id, req.tenantId);
         res.json(result);
     } catch (error) {
         res.status(404).json({ error: error.message });
@@ -222,7 +222,8 @@ exports.recordPayment = async (req, res) => {
         const result = await labourService.recordLabourPayment(
             labourId,
             projectNo,
-            req.body
+            req.body,
+            req.tenantId
         );
 
         res.status(201).json({
@@ -255,7 +256,8 @@ exports.getProjectPayments = async (req, res) => {
 
         const result = await labourService.getLabourPaymentsByProject(
             labourId,
-            projectNo
+            projectNo,
+            req.tenantId
         );
 
         res.status(200).json({
@@ -285,7 +287,7 @@ exports.getPaymentHistory = async (req, res) => {
             });
         }
 
-        const result = await labourService.getLabourPayments(labourId);
+        const result = await labourService.getLabourPayments(labourId, req.tenantId);
 
         res.status(200).json({
             success: true,
@@ -307,7 +309,7 @@ exports.getPaymentDetails = async (req, res) => {
     try {
         const { paymentId } = req.params;
 
-        const result = await labourService.getPaymentById(paymentId);
+        const result = await labourService.getPaymentById(paymentId, req.tenantId);
 
         res.status(200).json({
             success: true,
@@ -331,7 +333,8 @@ exports.updatePayment = async (req, res) => {
 
         const result = await labourService.updateLabourPayment(
             paymentId,
-            req.body
+            req.body,
+            req.tenantId
         );
 
         res.status(200).json({
@@ -355,7 +358,7 @@ exports.deletePayment = async (req, res) => {
     try {
         const { paymentId } = req.params;
 
-        const result = await labourService.deleteLabourPayment(paymentId);
+        const result = await labourService.deleteLabourPayment(paymentId, req.tenantId);
 
         res.status(200).json({
             success: true,

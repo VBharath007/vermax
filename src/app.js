@@ -18,6 +18,8 @@ app.use(helmet());
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 // Routes
+app.use("/api/super/tenants", require("./modules/tenant/tenant.routes"));
+app.use("/api/super/users", require("./modules/user/user.routes"));
 app.use("/api/auth", require("./routes/auth.routes"));
 app.use("/api/attendance", require("./routes/attendance.routes"));
 app.use("/api/employee", require("./routes/employee.routes"));

@@ -4,6 +4,47 @@ const { generateToken } = require("../utils/jwt");
 
 
 
+exports.register = async (req, res) => {
+    try {
+        const { email, password, name, phone, companyName } = req.body;
+        if (!email || !password) {
+            return res.status(400).json({ message: "Email and Password required" });
+        }
+
+        const adminSnap = await db.collection('admins').where('email', '==', email).get();
+        const userSnap = await db.collection('users').where('email', '==', email).get();
+        
+        if (!adminSnap.empty || !userSnap.empty) {
+            return res.status(400).json({ message: "User already exists" });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+        
+        // Save as pending admin (they will act as the admin of their company once approved)
+        const newUser = {
+            email,
+            password: hashedPassword,
+            name: name || '',
+            phone: phone || '',
+            companyName: companyName || '',
+            role: 'admin',
+            status: 'pending',
+            tenant_id: null,
+            createdAt: new Date().toISOString()
+        };
+
+        const docRef = await db.collection('admins').add(newUser);
+
+        res.status(201).json({
+            message: "Registration successful. Please wait for Super Admin approval.",
+            userId: docRef.id
+        });
+    } catch (error) {
+        console.error('[register]', error.message);
+        res.status(500).json({ message: error.message });
+    }
+};
+
 exports.login = async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -59,15 +100,34 @@ exports.login = async (req, res) => {
             if (!match) return res.status(401).json({ message: "Invalid password" });
         }
 
+        // ── Step 3.5: Check Pending Approval Status ────────────────
+        if (userDoc.status === 'pending') {
+            return res.status(403).json({ message: "Account pending Super Admin approval. Please wait." });
+        }
+
         // ── Step 4: Generate JWT ────────────────────────────────
         const token = generateToken({
             id: userId,
             role: userDoc.role,
-            empID: userDoc.empID
+            empID: userDoc.empID,
+            tenant_id: userDoc.tenant_id || (userDoc.role === 'super_admin' ? 'GLOBAL' : null)
         });
 
         const safeUser = { id: userId, ...userDoc };
         delete safeUser.password;   // never send password in response
+
+        // ── Fetch Features (User-specific or Tenant-wide) ──
+        if (userDoc.features && Array.isArray(userDoc.features)) {
+            safeUser.features = userDoc.features;
+        } else if (safeUser.tenant_id && safeUser.tenant_id !== 'GLOBAL') {
+            const tenantDoc = await db.collection("tenants").doc(safeUser.tenant_id).get();
+            if (tenantDoc.exists) {
+                safeUser.features = tenantDoc.data().features || [];
+            }
+        } else if (safeUser.role === 'super_admin' || safeUser.role === 'admin') {
+            // Give all features to GLOBAL admins for local testing
+            safeUser.features = ['dashboard', 'project_management', 'approvals', 'employee_management', 'dealer_management', 'bank_management', 'reminders'];
+        }
 
         res.status(200).json({
             message: "Login successful",
@@ -94,13 +154,38 @@ exports.verifyMFA = async (req, res) => {
         userId = 'defaultAdmin';
     }
 
+    // Ensure token gets tenant_id
+    let tenant_id = user.tenant_id || (user.role === 'super_admin' ? 'GLOBAL' : null);
+    
+    // For local mock testing, give 'admin' GLOBAL access if no tenant_id exists
+    if (!tenant_id && user.role === 'admin') {
+        tenant_id = 'GLOBAL';
+    }
+
     const token = generateToken({
         id: userId,
         role: user.role,
-        empID: user.empID
+        empID: user.empID,
+        tenant_id: tenant_id
     });
 
-    res.json({ token });
+    let features = [];
+    if (user.features && Array.isArray(user.features)) {
+        features = user.features;
+    } else if (tenant_id && tenant_id !== 'GLOBAL') {
+        const tenantDoc = await db.collection("tenants").doc(tenant_id).get();
+        if (tenantDoc.exists) {
+            features = tenantDoc.data().features || [];
+        }
+    } else if (tenant_id === 'GLOBAL') {
+        features = ['dashboard', 'project_management', 'approvals', 'employee_management', 'dealer_management', 'bank_management', 'reminders'];
+    }
+
+    res.json({ 
+        token,
+        tenant_id,
+        features
+    });
 };
 
 exports.getMe = async (req, res) => {

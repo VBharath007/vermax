@@ -2,12 +2,15 @@ const router = require("express").Router();
 const controller = require("../controllers/employee.controller");
 const { verifyToken } = require("../middleware/auth.middleware");
 const { authorize } = require("../middleware/role.middleware");
+const { tenantContext, featureGuard } = require("../middleware/tenant.middleware");
 
 // Create employee (Admin only)
 router.post(
     "/add",
     verifyToken,
     authorize(["admin"]),
+    tenantContext,
+    featureGuard("employee_management"),
     controller.addEmployee
 );
 
@@ -16,6 +19,8 @@ router.delete(
     "/:empID",
     verifyToken,
     authorize(["admin"]),
+    tenantContext,
+    featureGuard("employee_management"),
     controller.deleteEmployee
 );
 
@@ -24,6 +29,7 @@ router.put(
     "/:empID",
     verifyToken,
     authorize(["admin", "employee"]),
+    tenantContext,
     controller.updateEmployee
 );
 
@@ -32,6 +38,7 @@ router.get(
     "/dashboard",
     verifyToken,
     authorize(["employee"]),
+    tenantContext,
     controller.getDashboard
 );
 

@@ -3,8 +3,10 @@ const router = express.Router();
 const projectController = require("./project.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorize } = require("../../middleware/role.middleware");
+const { tenantContext, featureGuard } = require("../../middleware/tenant.middleware");
 
-const isAdmin = [verifyToken, authorize(["admin"])];
+// Include tenant isolation and feature toggling (e.g., 'project_management' feature)
+const isAdmin = [verifyToken, authorize(["admin"]), tenantContext, featureGuard("project_management")];
 
 const imageController = require("./image.controller");
 const upload = require("../../middleware/upload.middleware");

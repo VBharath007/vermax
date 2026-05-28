@@ -73,8 +73,12 @@ async function _getProjectNames(projectNos) {
 //    remainingAmount   ← shown below
 //    status badge      ← "Pending" or "Fully Paid"
 // =============================================================================
-exports.getAllDealers = async () => {
-    const snapshot = await materialReceivedCollection.get();
+exports.getAllDealers = async (tenant_id) => {
+    let query = materialReceivedCollection;
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
     if (snapshot.empty) return [];
 
     const dealerMap = {};
@@ -159,11 +163,15 @@ exports.getAllDealers = async () => {
 //
 //  Bottom: overall summary
 // =============================================================================
-exports.getDealerHistory = async (phoneNumber) => {
+exports.getDealerHistory = async (phoneNumber, tenant_id) => {
     if (!phoneNumber) throw new Error("Phone number is required");
 
-    const snapshot = await materialReceivedCollection
-        .where("dealerContact", "in", getPhoneVariations(phoneNumber)).get();
+    let query = materialReceivedCollection
+        .where("dealerContact", "in", getPhoneVariations(phoneNumber));
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
 
     if (snapshot.empty) throw new Error("No dealer found with this phone number");
 
@@ -259,15 +267,21 @@ exports.getDealerHistory = async (phoneNumber) => {
 //  Shows every payment logged by updateDealerPayment, latest first.
 //  Includes running total and per-project outstanding balance.
 // =============================================================================
-exports.getDealerPaymentLog = async (phoneNumber) => {
+exports.getDealerPaymentLog = async (phoneNumber, tenant_id) => {
     if (!phoneNumber) throw new Error("Phone number is required");
 
     const variations = getPhoneVariations(phoneNumber);
+    let paymentQuery = paymentsCollection.where("dealerContact", "in", variations);
+    let billQuery = materialReceivedCollection.where("dealerContact", "in", variations);
+    
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        paymentQuery = paymentQuery.where("tenant_id", "==", tenant_id);
+        billQuery = billQuery.where("tenant_id", "==", tenant_id);
+    }
+
     const [paymentSnap, billSnap] = await Promise.all([
-        paymentsCollection
-            .where("dealerContact", "in", variations).get(),
-        materialReceivedCollection
-            .where("dealerContact", "in", variations).get(),
+        paymentQuery.get(),
+        billQuery.get(),
     ]);
 
     if (billSnap.empty && paymentSnap.empty) {
@@ -368,12 +382,16 @@ exports.getDealerPaymentLog = async (phoneNumber) => {
 // =============================================================================
 // getDealerPaymentHistory  ← UNTOUCHED (your original code)
 // =============================================================================
-exports.getDealerPaymentHistory = async (phoneNumber) => {
+exports.getDealerPaymentHistory = async (phoneNumber, tenant_id) => {
     if (!phoneNumber) {
         throw new Error("Phone number is required");
     }
 
-    const snapshot = await materialReceivedCollection.where("dealerContact", "in", getPhoneVariations(phoneNumber)).get();
+    let query = materialReceivedCollection.where("dealerContact", "in", getPhoneVariations(phoneNumber));
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
 
     if (snapshot.empty) {
         throw new Error("No transactions found for this dealer phone number");
@@ -425,22 +443,27 @@ exports.getDealerPaymentHistory = async (phoneNumber) => {
 // =============================================================================
 // updateDealerPayment  ← UNTOUCHED (your original code)
 // =============================================================================
-exports.updateDealerPayment = async (phoneNumber, amountPaid) => {
+exports.updateDealerPayment = async (phoneNumber, amountPaid, tenant_id) => {
     if (!phoneNumber || !amountPaid || amountPaid <= 0) {
         throw new Error("Valid phone number and positive amountPaid are required");
     }
 
-    const snapshot = await materialReceivedCollection
-        .where("dealerContact", "in", getPhoneVariations(phoneNumber))
-        .get();
+    let query = materialReceivedCollection
+        .where("dealerContact", "in", getPhoneVariations(phoneNumber));
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
 
     const paymentRef = paymentsCollection.doc();
-    await paymentRef.set({
+    const paymentData = {
         dealerContact: phoneNumber,
         amountPaid: Number(amountPaid),
         date: new Date().toISOString(),
         type: "Payment"
-    });
+    };
+    if (tenant_id && tenant_id !== 'GLOBAL') paymentData.tenant_id = tenant_id;
+    await paymentRef.set(paymentData);
 
     const bills = [];
     snapshot.forEach(doc => bills.push({ id: doc.id, ref: doc.ref, data: doc.data() }));
@@ -484,7 +507,7 @@ exports.updateDealerPayment = async (phoneNumber, amountPaid) => {
 //
 //  ROUTE:  GET /api/dealers/:phoneNumber/project/:projectNo/payment-log
 // =============================================================================
-exports.getDealerProjectPaymentLog = async (phoneNumber, projectNo) => {
+exports.getDealerProjectPaymentLog = async (phoneNumber, projectNo, tenant_id) => {
     if (!phoneNumber) throw new Error("Phone number is required");
     if (!projectNo) throw new Error("projectNo is required");
 
@@ -496,17 +519,24 @@ exports.getDealerProjectPaymentLog = async (phoneNumber, projectNo) => {
         return `${dd}-${mm}-${yyyy}`;      // "17-03-2026"
     };
 
-    // Fetch bills + payment log + project name in parallel
     const variations = getPhoneVariations(phoneNumber);
+    
+    let billQuery = materialReceivedCollection
+        .where("dealerContact", "in", variations)
+        .where("projectNo", "==", projectNo);
+        
+    let paymentQuery = paymentsCollection
+        .where("dealerContact", "in", variations)
+        .where("projectNo", "==", projectNo);
+        
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        billQuery = billQuery.where("tenant_id", "==", tenant_id);
+        paymentQuery = paymentQuery.where("tenant_id", "==", tenant_id);
+    }
+
     const [billSnap, paymentSnap, projectDoc] = await Promise.all([
-        materialReceivedCollection
-            .where("dealerContact", "in", variations)
-            .where("projectNo", "==", projectNo)
-            .get(),
-        paymentsCollection
-            .where("dealerContact", "in", variations)
-            .where("projectNo", "==", projectNo)
-            .get(),
+        billQuery.get(),
+        paymentQuery.get(),
         projectsCollection.doc(projectNo).get(),
     ]);
 
@@ -645,7 +675,7 @@ exports.getDealerProjectPaymentLog = async (phoneNumber, projectNo) => {
 //    • Logs entry in dealerPayments collection (with projectNo stored)
 //    • Returns full updated payment log for this project
 // =============================================================================
-exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method, bankId) => {
+exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method, bankId, tenant_id) => {
     if (!phoneNumber) throw new Error("phoneNumber is required");
     if (!projectNo) throw new Error("projectNo is required");
     if (!amount || Number(amount) <= 0)
@@ -662,10 +692,13 @@ exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method,
     // ─────────────────────────────────────────────
     // 1. FETCH BILLS FIRST (IMPORTANT)
     // ─────────────────────────────────────────────
-    const snapshot = await materialReceivedCollection
+    let query = materialReceivedCollection
         .where("dealerContact", "in", variations)
-        .where("projectNo", "==", projectNo)
-        .get();
+        .where("projectNo", "==", projectNo);
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
 
     let totalPending = 0;
     let dealerName = "";
@@ -858,16 +891,26 @@ exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method,
 //
 //  ROUTE: DELETE /api/dealers/:phoneNumber
 // =============================================================================
-exports.deleteDealer = async (phoneNumber) => {
+exports.deleteDealer = async (phoneNumber, tenant_id) => {
     if (!phoneNumber) throw new Error("Phone number is required");
 
     const variations = getPhoneVariations(phoneNumber);
     
+    let receiptQuery = materialReceivedCollection.where("dealerContact", "in", variations);
+    let paymentQuery = paymentsCollection.where("dealerContact", "in", variations);
+    let expenseQuery = siteExpensesCollection.where("dealerContact", "in", variations).where("type", "==", "materialPayment");
+
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        receiptQuery = receiptQuery.where("tenant_id", "==", tenant_id);
+        paymentQuery = paymentQuery.where("tenant_id", "==", tenant_id);
+        expenseQuery = expenseQuery.where("tenant_id", "==", tenant_id);
+    }
+
     // 1. Fetch all related records
     const [receiptSnap, paymentSnap, expenseSnap] = await Promise.all([
-        materialReceivedCollection.where("dealerContact", "in", variations).get(),
-        paymentsCollection.where("dealerContact", "in", variations).get(),
-        siteExpensesCollection.where("dealerContact", "in", variations).where("type", "==", "materialPayment").get()
+        receiptQuery.get(),
+        paymentQuery.get(),
+        expenseQuery.get()
     ]);
 
     if (receiptSnap.empty && paymentSnap.empty) {

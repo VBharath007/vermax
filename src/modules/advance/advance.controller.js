@@ -8,7 +8,7 @@ const advanceService = require("./advance.service");
  */
 exports.createAdvance = async (req, res, next) => {
     try {
-        const result = await advanceService.createAdvance(req.body);
+        const result = await advanceService.createAdvance(req.body, req.tenantId);
         res.status(201).json({ 
             success: true, 
             data: result,
@@ -28,7 +28,7 @@ exports.createAdvance = async (req, res, next) => {
 exports.getAdvances = async (req, res, next) => {
     try {
         const projectNo = req.params.projectNo || req.query.projectNo;
-        const result = await advanceService.getAdvances(projectNo);
+        const result = await advanceService.getAdvances(projectNo, req.tenantId);
         res.status(200).json({ 
             success: true, 
             data: result
@@ -45,7 +45,7 @@ exports.getAdvances = async (req, res, next) => {
  */
 exports.updateAdvance = async (req, res, next) => {
     try {
-        const result = await advanceService.updateAdvance(req.params.id, req.body);
+        const result = await advanceService.updateAdvance(req.params.id, req.body, req.tenantId);
         res.status(200).json({ 
             success: true, 
             data: result,
@@ -63,7 +63,7 @@ exports.updateAdvance = async (req, res, next) => {
  */
 exports.deleteAdvance = async (req, res, next) => {
     try {
-        const result = await advanceService.deleteAdvance(req.params.id);
+        const result = await advanceService.deleteAdvance(req.params.id, req.tenantId);
         res.status(200).json({ 
             success: true, 
             ...result,
@@ -81,7 +81,7 @@ exports.deleteAdvance = async (req, res, next) => {
 exports.getBankTransactionHistory = async (req, res, next) => {
     try {
         const { bankId } = req.params;
-        const result = await advanceService.getBankTransactionHistory(bankId);
+        const result = await advanceService.getBankTransactionHistory(bankId, req.tenantId);
         res.status(200).json({ 
             success: true, 
             data: result,

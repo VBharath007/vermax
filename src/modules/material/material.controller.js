@@ -3,7 +3,7 @@ const materialService = require("./material.service");
 // --- Material Master --- //
 exports.createMaterial = async (req, res, next) => {
     try {
-        const result = await materialService.createMaterial(req.body);
+        const result = await materialService.createMaterial(req.body, req.tenantId);
         res.status(201).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -12,7 +12,7 @@ exports.createMaterial = async (req, res, next) => {
 
 exports.getMaterials = async (req, res, next) => {
     try {
-        const result = await materialService.getMaterials();
+        const result = await materialService.getMaterials(req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -22,7 +22,7 @@ exports.getMaterials = async (req, res, next) => {
 // --- Material Received --- //
 exports.recordMaterialReceived = async (req, res, next) => {
     try {
-        const result = await materialService.recordMaterialReceived(req.body);
+        const result = await materialService.recordMaterialReceived(req.body, req.tenantId);
         res.status(201).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -32,7 +32,7 @@ exports.recordMaterialReceived = async (req, res, next) => {
 exports.getMaterialReceived = async (req, res, next) => {
     try {
         const { projectNo } = req.query;
-        const result = await materialService.getMaterialReceived(projectNo);
+        const result = await materialService.getMaterialReceived(projectNo, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -41,7 +41,7 @@ exports.getMaterialReceived = async (req, res, next) => {
 
 exports.getMaterialReceivedByMaterialId = async (req, res, next) => {
     try {
-        const result = await materialService.getMaterialReceivedByMaterialId(req.params.materialId);
+        const result = await materialService.getMaterialReceivedByMaterialId(req.params.materialId, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(404).json({ success: false, message: error.message });
@@ -52,7 +52,8 @@ exports.updateReceiptPayment = async (req, res, next) => {
     try {
         const result = await materialService.updateReceiptPayment(
             req.params.receiptId,
-            req.body
+            req.body,
+            req.tenantId
         );
 
         res.status(200).json({
@@ -74,7 +75,7 @@ exports.updateReceiptPayment = async (req, res, next) => {
 
 exports.updateMaterialReceived = async (req, res, next) => {
     try {
-        const result = await materialService.updateMaterialReceived(req.params.receiptId, req.body);
+        const result = await materialService.updateMaterialReceived(req.params.receiptId, req.body, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -83,7 +84,7 @@ exports.updateMaterialReceived = async (req, res, next) => {
 
 exports.deleteMaterialReceived = async (req, res, next) => {
     try {
-        const result = await materialService.deleteMaterialReceived(req.params.receiptId);
+        const result = await materialService.deleteMaterialReceived(req.params.receiptId, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -93,7 +94,7 @@ exports.deleteMaterialReceived = async (req, res, next) => {
 // --- Material Used --- //
 exports.recordMaterialUsed = async (req, res, next) => {
     try {
-        const result = await materialService.recordMaterialUsed(req.body);
+        const result = await materialService.recordMaterialUsed(req.body, req.tenantId);
         res.status(201).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -104,7 +105,10 @@ exports.getAllMaterialUsed = async (req, res, next) => {
     try {
         const { projectNo } = req.params;
         const snap = require("../../config/firebase").db.collection("materialUsed");
-        const query = projectNo ? snap.where("projectNo", "==", projectNo) : snap;
+        let query = projectNo ? snap.where("projectNo", "==", projectNo) : snap;
+        if (req.tenantId && req.tenantId !== 'GLOBAL') {
+            query = query.where("tenant_id", "==", req.tenantId);
+        }
         const result = await query.get();
         const data = result.docs.map(doc => ({ usageId: doc.id, ...doc.data() }));
         res.status(200).json({ success: true, data });
@@ -115,7 +119,7 @@ exports.getAllMaterialUsed = async (req, res, next) => {
 
 exports.updateMaterialUsed = async (req, res, next) => {
     try {
-        const result = await materialService.updateMaterialUsed(req.params.usageId, req.body);
+        const result = await materialService.updateMaterialUsed(req.params.usageId, req.body, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -124,7 +128,7 @@ exports.updateMaterialUsed = async (req, res, next) => {
 
 exports.deleteMaterialUsed = async (req, res, next) => {
     try {
-        const result = await materialService.deleteMaterialUsed(req.params.usageId);
+        const result = await materialService.deleteMaterialUsed(req.params.usageId, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -135,7 +139,7 @@ exports.deleteMaterialUsed = async (req, res, next) => {
 exports.getMaterialStock = async (req, res, next) => {
     try {
         const { projectNo } = req.params;
-        const result = await materialService.getMaterialStock(projectNo);
+        const result = await materialService.getMaterialStock(projectNo, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -144,7 +148,7 @@ exports.getMaterialStock = async (req, res, next) => {
 
 exports.addMaterialRequired = async (req, res, next) => {
     try {
-        const result = await materialService.addMaterialRequired(req.body);
+        const result = await materialService.addMaterialRequired(req.body, req.tenantId);
         res.status(201).json({ message: "Material Required Added", id: result.id, data: result });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -153,7 +157,7 @@ exports.addMaterialRequired = async (req, res, next) => {
 
 exports.getMaterialRequired = async (req, res, next) => {
     try {
-        const result = await materialService.getMaterialRequired(req.params.projectNo);
+        const result = await materialService.getMaterialRequired(req.params.projectNo, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -162,7 +166,7 @@ exports.getMaterialRequired = async (req, res, next) => {
 
 exports.getAllMaterialRequired = async (req, res, next) => {
     try {
-        const result = await materialService.getAllMaterialRequired();
+        const result = await materialService.getAllMaterialRequired(req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -179,7 +183,7 @@ exports.getAllMaterialRequired = async (req, res, next) => {
  */
 exports.createMaterialAdvance = async (req, res, next) => {
     try {
-        const result = await materialService.createMaterialAdvance(req.body);
+        const result = await materialService.createMaterialAdvance(req.body, req.tenantId);
         res.status(201).json({ 
             success: true, 
             data: result,
@@ -199,7 +203,7 @@ exports.createMaterialAdvance = async (req, res, next) => {
 exports.getMaterialAdvances = async (req, res, next) => {
     try {
         const projectNo = req.params.projectNo || req.query.projectNo;
-        const result = await materialService.getMaterialAdvances(projectNo);
+        const result = await materialService.getMaterialAdvances(projectNo, req.tenantId);
         res.status(200).json({ 
             success: true, 
             data: result
@@ -216,7 +220,7 @@ exports.getMaterialAdvances = async (req, res, next) => {
  */
 exports.updateMaterialAdvance = async (req, res, next) => {
     try {
-        const result = await materialService.updateMaterialAdvance(req.params.id, req.body);
+        const result = await materialService.updateMaterialAdvance(req.params.id, req.body, req.tenantId);
         res.status(200).json({ 
             success: true, 
             data: result,
@@ -235,7 +239,7 @@ exports.updateMaterialAdvance = async (req, res, next) => {
 
 exports.updateMaterialRequired = async (req, res, next) => {
     try {
-        const result = await materialService.updateMaterialRequired(req.params.requiredId, req.body);
+        const result = await materialService.updateMaterialRequired(req.params.requiredId, req.body, req.tenantId);
         res.status(200).json({ 
             success: true, 
             data: result,
@@ -251,7 +255,7 @@ exports.updateMaterialRequired = async (req, res, next) => {
 
 exports.deleteMaterialRequired = async (req, res, next) => {
     try {
-        const result = await materialService.deleteMaterialRequired(req.params.requiredId);
+        const result = await materialService.deleteMaterialRequired(req.params.requiredId, req.tenantId);
         res.status(200).json({ 
             success: true, 
             data: result,
@@ -272,7 +276,7 @@ exports.deleteMaterialRequired = async (req, res, next) => {
  */
 exports.deleteMaterialAdvance = async (req, res, next) => {
     try {
-        const result = await materialService.deleteMaterialAdvance(req.params.id);
+        const result = await materialService.deleteMaterialAdvance(req.params.id, req.tenantId);
         res.status(200).json({ 
             success: true, 
             ...result,
@@ -290,7 +294,7 @@ exports.deleteMaterialAdvance = async (req, res, next) => {
 exports.getBankTransactionHistoryForMaterialAdvance = async (req, res, next) => {
     try {
         const { bankId } = req.params;
-        const result = await materialService.getBankTransactionHistoryForMaterialAdvance(bankId);
+        const result = await materialService.getBankTransactionHistoryForMaterialAdvance(bankId, req.tenantId);
         res.status(200).json({ 
             success: true, 
             data: result,

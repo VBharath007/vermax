@@ -51,15 +51,18 @@ const SEED_LIMITS = [
  * MOULD PURCHASE MANAGEMENT
  */
 
-exports.createPurchase = async (data) => {
+exports.createPurchase = async (data, tenant_id) => {
     const { materialName, size, totalQuantity, unitType, rent } = data;
     const now = nowIST();
 
     // Check if same name + same size already exists → update stock
-    const snapshot = await db.collection(MOULD_PURCHASES)
+    let query = db.collection(MOULD_PURCHASES)
         .where("materialName", "==", materialName)
-        .where("size", "==", size)
-        .get();
+        .where("size", "==", size);
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
 
     if (!snapshot.empty) {
         const existingDoc = snapshot.docs[0];
@@ -117,28 +120,35 @@ exports.createPurchase = async (data) => {
             rentAmount: rent?.rentAmount || 0
         },
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+        tenant_id
     };
 
     await docRef.set(purchaseData);
     return purchaseData;
 };
 
-exports.getAllPurchases = async () => {
-    const snapshot = await db.collection(MOULD_PURCHASES).get();
+exports.getAllPurchases = async (tenant_id) => {
+    let query = db.collection(MOULD_PURCHASES);
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
     return snapshot.docs.map(doc => doc.data());
 };
 
-exports.getPurchaseById = async (id) => {
+exports.getPurchaseById = async (id, tenant_id) => {
     const doc = await db.collection(MOULD_PURCHASES).doc(id).get();
     if (!doc.exists) throw new Error("Purchase item not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
     return doc.data();
 };
 
-exports.updatePurchase = async (id, updates) => {
+exports.updatePurchase = async (id, updates, tenant_id) => {
     const docRef = db.collection(MOULD_PURCHASES).doc(id);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Purchase item not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const now = nowIST();
     const updatedData = { ...updates, updatedAt: now };
@@ -146,10 +156,11 @@ exports.updatePurchase = async (id, updates) => {
     return { ...doc.data(), ...updatedData };
 };
 
-exports.deletePurchase = async (id) => {
+exports.deletePurchase = async (id, tenant_id) => {
     const docRef = db.collection(MOULD_PURCHASES).doc(id);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Purchase item not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
     await docRef.delete();
 };
 
@@ -157,7 +168,7 @@ exports.deletePurchase = async (id) => {
  * RENTAL MANAGEMENT
  */
 
-exports.createRental = async (mouldId, data) => {
+exports.createRental = async (mouldId, data, tenant_id) => {
     const {
         customerName,
         phoneNumber,
@@ -234,7 +245,8 @@ exports.createRental = async (mouldId, data) => {
         },
         status: paymentStatus === "Paid" && actualReturnDate ? "COMPLETED" : "ACTIVE",
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+        tenant_id
     };
 
     await docRef.set(rentalData);
@@ -242,8 +254,12 @@ exports.createRental = async (mouldId, data) => {
 };
 
 
-exports.getAllRentals = async () => {
-    const snapshot = await db.collection(MOULD_RENTALS).get();
+exports.getAllRentals = async (tenant_id) => {
+    let query = db.collection(MOULD_RENTALS);
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
     return snapshot.docs.map(doc => {
         const d = doc.data();
         return {
@@ -258,9 +274,10 @@ exports.getAllRentals = async () => {
     });
 };
 
-exports.getRentalById = async (id) => {
+exports.getRentalById = async (id, tenant_id) => {
     const doc = await db.collection(MOULD_RENTALS).doc(id).get();
     if (!doc.exists) throw new Error("Rental record not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
     return doc.data();
 };
 
@@ -268,10 +285,11 @@ exports.getRentalById = async (id) => {
  * Add Payment or Update Rental (PUT /rental/:id)
  * FIX: Sum from paymentHistory to avoid stale payment object bug
  */
-exports.updateRental = async (id, body) => {
+exports.updateRental = async (id, body, tenant_id) => {
     const docRef = db.collection(MOULD_RENTALS).doc(id);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Rental record not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const rental = doc.data();
     const now = nowIST();
@@ -380,10 +398,11 @@ exports.updateRental = async (id, body) => {
 };
 
 
-exports.deleteRental = async (id) => {
+exports.deleteRental = async (id, tenant_id) => {
     const docRef = db.collection(MOULD_RENTALS).doc(id);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Rental record not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const rental = doc.data();
     const now = nowIST();
@@ -405,11 +424,12 @@ exports.deleteRental = async (id) => {
     await docRef.delete();
 };
 
-exports.paymentUpdate = async (id, body) => {
+exports.paymentUpdate = async (id, body, tenant_id) => {
     const { balance: payAmount, note } = body;
     const docRef = db.collection(MOULD_RENTALS).doc(id);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Rental record not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const rental = doc.data();
     const now = nowIST();
@@ -466,11 +486,12 @@ exports.paymentUpdate = async (id, body) => {
     return { success: true, message: "Payment successfully updated", data: updatedPaymentDetails };
 };
 
-exports.addPayment = async (rentalId, paymentInfo) => {
+exports.addPayment = async (rentalId, paymentInfo, tenant_id) => {
     const { amount, date, note } = paymentInfo;
     const docRef = db.collection(MOULD_RENTALS).doc(rentalId);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Rental record not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const rental = doc.data();
     const now = nowIST();
@@ -525,10 +546,11 @@ exports.addPayment = async (rentalId, paymentInfo) => {
     return freshDoc.data();
 };
 
-exports.closeRental = async (rentalId) => {
+exports.closeRental = async (rentalId, tenant_id) => {
     const docRef = db.collection(MOULD_RENTALS).doc(rentalId);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Rental record not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const rental = doc.data();
     const now = nowIST();
@@ -550,10 +572,12 @@ exports.closeRental = async (rentalId) => {
     await docRef.update({ status: "COMPLETED", updatedAt: now });
 };
 
-exports.getClientMaterialHistory = async (clientName, materialId) => {
-    const snapshot = await db.collection(MOULD_RENTALS)
-        .where("clientName", "==", clientName)
-        .get();
+exports.getClientMaterialHistory = async (clientName, materialId, tenant_id) => {
+    let query = db.collection(MOULD_RENTALS).where("clientName", "==", clientName);
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
 
     const history = [];
     snapshot.docs.forEach(doc => {
@@ -575,10 +599,12 @@ exports.getClientMaterialHistory = async (clientName, materialId) => {
     return history;
 };
 
-exports.getCustomerLedger = async (phoneNumber) => {
-    const snapshot = await db.collection(MOULD_RENTALS)
-        .where("phoneNumber", "==", phoneNumber)
-        .get();
+exports.getCustomerLedger = async (phoneNumber, tenant_id) => {
+    let query = db.collection(MOULD_RENTALS).where("phoneNumber", "==", phoneNumber);
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
 
     const historyList = [];
     let activeTransaction = null;
@@ -675,7 +701,7 @@ exports.getCustomerLedger = async (phoneNumber) => {
     };
 };
 
-exports.calculateRental = async (data) => {
+exports.calculateRental = async (data, tenant_id) => {
     const { clientName, startDate, endDate, initialPayment, items } = data;
     const start = dayjs(startDate);
     const end = dayjs(endDate);
@@ -736,9 +762,10 @@ exports.calculateRental = async (data) => {
  * 🟡 ADD NEW MOULD (General Inventory)
  * Based on user requested structure
  */
-exports.addNewMould = async (data) => {
+exports.addNewMould = async (data, tenant_id) => {
     const now = nowIST();
     const docRef = db.collection(MOULDS).doc();
+    if (!tenant_id) throw new Error("tenant_id is required");
 
     const mouldData = {
         id: docRef.id,
@@ -758,14 +785,19 @@ exports.addNewMould = async (data) => {
             unitPrice: Number(data.unitPrice || 0)
         },
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+        tenant_id
     };
 
     await docRef.set(mouldData);
     return mouldData;
 };
 
-exports.getAllMoulds = async () => {
-    const snapshot = await db.collection(MOULDS).get();
+exports.getAllMoulds = async (tenant_id) => {
+    let query = db.collection(MOULDS);
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
     return snapshot.docs.map(doc => doc.data());
 };

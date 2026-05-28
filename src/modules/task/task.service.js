@@ -44,7 +44,8 @@ const formatDisplayDate = (ddmmyyyy) => {
 
 // ── CRUD ──────────────────────────────────────────────────────────────────────
 
-const createTask = async (data) => {
+const createTask = async (data, tenant_id) => {
+  if (!tenant_id) throw new Error("tenant_id is required");
   const now = new Date().toISOString();
   const payload = {
     title: data.title,
@@ -60,15 +61,17 @@ const createTask = async (data) => {
     completedAt: null,
     createdAt: now,
     updatedAt: now,
+    tenant_id,
   };
   const ref = await tasksCol().add(payload);
   return { id: ref.id, ...payload };
 };
 
-const updateTask = async (id, data) => {
+const updateTask = async (id, data, tenant_id) => {
   const now = new Date().toISOString();
   const snap = await taskRef(id).get();
   if (!snap.exists) throw new Error("Task not found");
+  if (tenant_id && tenant_id !== 'GLOBAL' && snap.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
   const existing = snap.data();
 
   const updates = { ...data, updatedAt: now };
@@ -84,51 +87,63 @@ const updateTask = async (id, data) => {
   return { id: updated.id, ...updated.data() };
 };
 
-const deleteTask = async (id) => {
+const deleteTask = async (id, tenant_id) => {
+  const snap = await taskRef(id).get();
+  if (!snap.exists) throw new Error("Task not found");
+  if (tenant_id && tenant_id !== 'GLOBAL' && snap.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
   await taskRef(id).delete();
   return { deleted: true };
 };
 
-const getTaskById = async (id) => {
+const getTaskById = async (id, tenant_id) => {
   const snap = await taskRef(id).get();
   if (!snap.exists) throw new Error("Task not found");
+  if (tenant_id && tenant_id !== 'GLOBAL' && snap.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
   return { id: snap.id, ...snap.data() };
 };
 
-const completeTask = async (id, completed) => {
+const completeTask = async (id, completed, tenant_id) => {
+  const snap = await taskRef(id).get();
+  if (!snap.exists) throw new Error("Task not found");
+  if (tenant_id && tenant_id !== 'GLOBAL' && snap.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
+
   const now = new Date().toISOString();
   await taskRef(id).update({
     completed,
     completedAt: completed ? now : null,
     updatedAt: now,
   });
-  const snap = await taskRef(id).get();
-  return { id: snap.id, ...snap.data() };
+  const updatedSnap = await taskRef(id).get();
+  return { id: updatedSnap.id, ...updatedSnap.data() };
 };
 
 // ── Shared fetch ──────────────────────────────────────────────────────────────
-const fetchAllIncomplete = async () => {
-  const snap = await tasksCol().where("completed", "==", false).get();
+const fetchAllIncomplete = async (tenant_id) => {
+  let query = tasksCol().where("completed", "==", false);
+  if (tenant_id && tenant_id !== 'GLOBAL') {
+      query = query.where("tenant_id", "==", tenant_id);
+  }
+  const snap = await query.get();
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 };
 
 // ── Smart Lists ───────────────────────────────────────────────────────────────
 
-const getAll = async () => {
-  const tasks = await fetchAllIncomplete();
+const getAll = async (tenant_id) => {
+  const tasks = await fetchAllIncomplete(tenant_id);
   return tasks.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 };
 
-const getToday = async () => {
+const getToday = async (tenant_id) => {
   const today = todayFormatted(); // "09-04-2026"
-  const tasks = await fetchAllIncomplete();
+  const tasks = await fetchAllIncomplete(tenant_id);
   return tasks
     .filter((t) => t.dueDate === today)
     .sort((a, b) => (a.dueTimestamp || "").localeCompare(b.dueTimestamp || ""));
 };
 
-const getScheduled = async () => {
-  const tasks = await fetchAllIncomplete();
+const getScheduled = async (tenant_id) => {
+  const tasks = await fetchAllIncomplete(tenant_id);
   const withDate = tasks.filter((t) => t.hasDueDate && t.dueDate);
 
   // Sort by date using sortable number
@@ -153,13 +168,17 @@ const getScheduled = async () => {
     }));
 };
 
-const getFlagged = async () => {
-  const tasks = await fetchAllIncomplete();
+const getFlagged = async (tenant_id) => {
+  const tasks = await fetchAllIncomplete(tenant_id);
   return tasks.filter((t) => t.flagged);
 };
 
-const getCompleted = async () => {
-  const snap = await tasksCol().where("completed", "==", true).get();
+const getCompleted = async (tenant_id) => {
+  let query = tasksCol().where("completed", "==", true);
+  if (tenant_id && tenant_id !== 'GLOBAL') {
+      query = query.where("tenant_id", "==", tenant_id);
+  }
+  const snap = await query.get();
   const tasks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
   tasks.sort((a, b) => (b.completedAt || "").localeCompare(a.completedAt || ""));
@@ -184,17 +203,24 @@ const getCompleted = async () => {
   return grouped;
 };
 
-const getByList = async (listId) => {
-  const tasks = await fetchAllIncomplete();
+const getByList = async (listId, tenant_id) => {
+  const tasks = await fetchAllIncomplete(tenant_id);
   return tasks.filter((t) => t.listId === listId);
 };
 
-const getSmartCounts = async () => {
+const getSmartCounts = async (tenant_id) => {
   const today = todayFormatted(); // "09-04-2026"
 
+  let incQuery = tasksCol().where("completed", "==", false);
+  let compQuery = tasksCol().where("completed", "==", true);
+  if (tenant_id && tenant_id !== 'GLOBAL') {
+      incQuery = incQuery.where("tenant_id", "==", tenant_id);
+      compQuery = compQuery.where("tenant_id", "==", tenant_id);
+  }
+
   const [incompleteSnap, completedSnap] = await Promise.all([
-    tasksCol().where("completed", "==", false).get(),
-    tasksCol().where("completed", "==", true).count().get(),
+    incQuery.get(),
+    compQuery.count().get(),
   ]);
 
   const incomplete = incompleteSnap.docs.map((d) => d.data());

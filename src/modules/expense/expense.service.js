@@ -10,10 +10,11 @@ const banksCollection = db.collection("banks");
 //  Material payment expenses are auto-created by material_service.js.
 //  We block type="materialPayment" here to prevent accidental duplication.
 //
-exports.createExpense = async (expenseData) => {
+exports.createExpense = async (expenseData, tenant_id) => {
     if (!expenseData.projectNo) {
         throw new Error("projectNo is required");
     }
+    if (!tenant_id) throw new Error("tenant_id is required");
 
     if (!expenseData.amount) {
         throw new Error("amount is required");
@@ -99,6 +100,7 @@ exports.createExpense = async (expenseData) => {
     expenseData.pastExpense = totalPrevious;
 
     // 💾 save expense
+    expenseData.tenant_id = tenant_id;
     const docRef = await siteExpensesCollection.add(expenseData);
 
     // 🔁 update transaction with reference
@@ -129,10 +131,13 @@ exports.createExpense = async (expenseData) => {
 //    "Total Expense:     ₹Z"
 //    "Amount Left:       ₹(advance − Z)"
 //
-exports.getExpenses = async (projectNo) => {
+exports.getExpenses = async (projectNo, tenant_id) => {
     let query = siteExpensesCollection;
     if (projectNo) {
         query = query.where("projectNo", "==", projectNo);
+    }
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
     }
     const snapshot = await query.get();
 
@@ -201,12 +206,13 @@ exports.getExpenses = async (projectNo) => {
 //  Only manual siteExpense records can be updated here.
 //  To update a material payment, update the paidAmount on the material receipt.
 //
-exports.updateExpense = async (id, updateData) => {
+exports.updateExpense = async (id, updateData, tenant_id) => {
     const docRef = siteExpensesCollection.doc(id);
     const doc = await docRef.get();
     if (!doc.exists) {
         throw new Error("Expense record not found");
     }
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     if (doc.data().type === "materialPayment") {
         throw new Error(
@@ -260,12 +266,13 @@ exports.updateExpense = async (id, updateData) => {
 //  Only manual siteExpense records can be deleted here.
 //  Material payment entries are deleted automatically when the receipt is deleted.
 //
-exports.deleteExpense = async (id) => {
+exports.deleteExpense = async (id, tenant_id) => {
     const docRef = siteExpensesCollection.doc(id);
     const doc = await docRef.get();
     if (!doc.exists) {
         throw new Error("Expense record not found");
     }
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     // Guard: prevent manual deletion of auto-generated entries
     if (doc.data().type === "materialPayment") {
@@ -290,7 +297,7 @@ exports.deleteExpense = async (id) => {
 
 // ─── Financial History ────────────────────────────────────────────────────────
 //  Delegates to project_service which owns the single source of truth.
-exports.getFinancialHistory = async (projectNo) => {
+exports.getFinancialHistory = async (projectNo, tenant_id) => {
     const projectService = require("../project/project.service");
-    return projectService.getFinancialHistory(projectNo);
+    return projectService.getFinancialHistory(projectNo, tenant_id);
 };

@@ -19,7 +19,7 @@ const checkValidation = (req) => {
 exports.createPurchase = async (req, res, next) => {
     try {
         checkValidation(req);
-        const purchase = await mouldService.createPurchase(req.body);
+        const purchase = await mouldService.createPurchase(req.body, req.tenantId);
         res.status(201).json({ success: true, data: purchase });
     } catch (error) {
         next(error);
@@ -28,7 +28,7 @@ exports.createPurchase = async (req, res, next) => {
 
 exports.getAllPurchases = async (req, res, next) => {
     try {
-        const purchases = await mouldService.getAllPurchases();
+        const purchases = await mouldService.getAllPurchases(req.tenantId);
         res.status(200).json({ success: true, data: purchases });
     } catch (error) {
         next(error);
@@ -37,7 +37,7 @@ exports.getAllPurchases = async (req, res, next) => {
 
 exports.getPurchaseById = async (req, res, next) => {
     try {
-        const purchase = await mouldService.getPurchaseById(req.params.id);
+        const purchase = await mouldService.getPurchaseById(req.params.id, req.tenantId);
         res.status(200).json({ success: true, data: purchase });
     } catch (error) {
         next(error);
@@ -46,7 +46,7 @@ exports.getPurchaseById = async (req, res, next) => {
 
 exports.updatePurchase = async (req, res, next) => {
     try {
-        const purchase = await mouldService.updatePurchase(req.params.id, req.body);
+        const purchase = await mouldService.updatePurchase(req.params.id, req.body, req.tenantId);
         res.status(200).json({ success: true, data: purchase });
     } catch (error) {
         next(error);
@@ -55,7 +55,7 @@ exports.updatePurchase = async (req, res, next) => {
 
 exports.deletePurchase = async (req, res, next) => {
     try {
-        await mouldService.deletePurchase(req.params.id);
+        await mouldService.deletePurchase(req.params.id, req.tenantId);
         res.status(200).json({ success: true, message: "Purchase item deleted" });
     } catch (error) {
         next(error);
@@ -69,7 +69,7 @@ exports.deletePurchase = async (req, res, next) => {
 exports.createRental = async (req, res, next) => {
     try {
         checkValidation(req);
-        const rental = await mouldService.createRental(req.params.id, req.body);
+        const rental = await mouldService.createRental(req.params.id, req.body, req.tenantId);
         res.status(201).json({ success: true, data: rental });
     } catch (error) {
         next(error);
@@ -78,7 +78,7 @@ exports.createRental = async (req, res, next) => {
 
 exports.getAllRentals = async (req, res, next) => {
     try {
-        const rentals = await mouldService.getAllRentals();
+        const rentals = await mouldService.getAllRentals(req.tenantId);
         res.status(200).json({ success: true, data: rentals });
     } catch (error) {
         next(error);
@@ -87,7 +87,7 @@ exports.getAllRentals = async (req, res, next) => {
 
 exports.getRentalById = async (req, res, next) => {
     try {
-        const rental = await mouldService.getRentalById(req.params.id);
+        const rental = await mouldService.getRentalById(req.params.id, req.tenantId);
         res.status(200).json({ success: true, data: rental });
     } catch (error) {
         next(error);
@@ -97,7 +97,7 @@ exports.getRentalById = async (req, res, next) => {
 // PUT /rental/:id — supports addPayment or generic update
 exports.updateRental = async (req, res, next) => {
     try {
-        const result = await mouldService.updateRental(req.params.id, req.body);
+        const result = await mouldService.updateRental(req.params.id, req.body, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         next(error);
@@ -106,7 +106,7 @@ exports.updateRental = async (req, res, next) => {
 
 exports.deleteRental = async (req, res, next) => {
     try {
-        await mouldService.deleteRental(req.params.id);
+        await mouldService.deleteRental(req.params.id, req.tenantId);
         res.status(200).json({ success: true, message: "Rental deleted and stock restored" });
     } catch (error) {
         next(error);
@@ -120,7 +120,7 @@ exports.deleteRental = async (req, res, next) => {
 exports.addPayment = async (req, res, next) => {
     try {
         checkValidation(req);
-        const rental = await mouldService.addPayment(req.params.id, req.body);
+        const rental = await mouldService.addPayment(req.params.id, req.body, req.tenantId);
         res.status(200).json({ success: true, data: rental });
     } catch (error) {
         next(error);
@@ -129,7 +129,7 @@ exports.addPayment = async (req, res, next) => {
 
 exports.closeRental = async (req, res, next) => {
     try {
-        await mouldService.closeRental(req.params.id);
+        await mouldService.closeRental(req.params.id, req.tenantId);
         res.status(200).json({ success: true, message: "Rental closed successfully" });
     } catch (error) {
         next(error);
@@ -146,7 +146,7 @@ exports.getClientMaterialHistory = async (req, res, next) => {
         if (!clientName || !materialId) {
             return res.status(400).json({ success: false, message: "clientName and materialId are required" });
         }
-        const history = await mouldService.getClientMaterialHistory(clientName, materialId);
+        const history = await mouldService.getClientMaterialHistory(clientName, materialId, req.tenantId);
         res.status(200).json({ success: true, data: history });
     } catch (error) {
         next(error);
@@ -161,7 +161,7 @@ exports.getCustomerLedger = async (req, res, next) => {
         }
         // Properly decode the phone number just in case the UI sends it URL encoded (like %2B91)
         const decodedPhone = decodeURIComponent(phoneNumber);
-        const ledger = await mouldService.getCustomerLedger(decodedPhone);
+        const ledger = await mouldService.getCustomerLedger(decodedPhone, req.tenantId);
         res.status(200).json({ success: true, data: ledger });
     } catch (error) {
         next(error);
@@ -171,7 +171,7 @@ exports.getCustomerLedger = async (req, res, next) => {
 exports.calculateRental = async (req, res, next) => {
     try {
         checkValidation(req);
-        const result = await mouldService.calculateRental(req.body);
+        const result = await mouldService.calculateRental(req.body, req.tenantId);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         next(error);
@@ -181,7 +181,7 @@ exports.calculateRental = async (req, res, next) => {
 exports.paymentUpdate = async (req, res, next) => {
     try {
         checkValidation(req);
-        const result = await mouldService.paymentUpdate(req.params.id, req.body);
+        const result = await mouldService.paymentUpdate(req.params.id, req.body, req.tenantId);
         res.status(200).json(result);
     } catch (error) {
         next(error);
@@ -194,7 +194,7 @@ exports.paymentUpdate = async (req, res, next) => {
 exports.addNewMould = async (req, res, next) => {
     try {
         checkValidation(req);
-        const mould = await mouldService.addNewMould(req.body);
+        const mould = await mouldService.addNewMould(req.body, req.tenantId);
         res.status(201).json({ success: true, data: mould });
     } catch (error) {
         next(error);
@@ -203,7 +203,7 @@ exports.addNewMould = async (req, res, next) => {
 
 exports.getAllMoulds = async (req, res, next) => {
     try {
-        const moulds = await mouldService.getAllMoulds();
+        const moulds = await mouldService.getAllMoulds(req.tenantId);
         res.status(200).json({ success: true, data: moulds });
     } catch (error) {
         next(error);

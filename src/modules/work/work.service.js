@@ -187,9 +187,10 @@ const cleanLegacyLabourFields = (workData) => {
  *   Day 13: workName="Ceiling shuttering" (auto-filled from tomorrowWork)   → NEW doc created
  *   Day 13: workName="Pillar shuttering" again                               → UPDATES existing doc (not a new one)
  */
-exports.createWork = async (workData) => {
+exports.createWork = async (workData, tenant_id) => {
     const { projectNo, work, tomorrowWork } = workData;
     if (!projectNo) throw new Error("projectNo is required");
+    if (!tenant_id) throw new Error("tenant_id is required");
 
     if (!work || !work.trim()) {
         throw new Error("work (work name) is required. Please enter a work name before saving.");
@@ -205,14 +206,17 @@ exports.createWork = async (workData) => {
         tomorrowWork: (tomorrowWork || "").trim(),
         date: workDate,
         createdAt: now(),
-        labourDetails: {}
+        labourDetails: {},
+        tenant_id
     };
 
-    const existingSnapshot = await worksCollection
+    let query = worksCollection
         .where("projectNo", "==", projectNo)
-        .where("work", "==", name)
-        .limit(1)
-        .get();
+        .where("work", "==", name);
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const existingSnapshot = await query.limit(1).get();
 
     if (!existingSnapshot.empty) {
         const existingDoc = existingSnapshot.docs[0];
@@ -257,10 +261,11 @@ exports.createWork = async (workData) => {
  * @param {string} headLabourId – Firestore doc ID from labourMaster collection
  * @param {object} [subLabourDetails] – optional override: { "MASON": 4, "MC": 3, ... }
  */
-exports.assignLabourToWork = async (projectNo, workId, headLabourId, subLabourDetails) => {
+exports.assignLabourToWork = async (projectNo, workId, headLabourId, subLabourDetails, tenant_id) => {
     const workRef = worksCollection.doc(workId);
     const workDoc = await workRef.get();
     if (!workDoc.exists) throw new Error("Work log not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && workDoc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
     const docData = workDoc.data();
     if (docData.projectNo !== projectNo) {
         throw new Error(`Work '${workId}' does not belong to project '${projectNo}'`);
@@ -309,10 +314,11 @@ exports.assignLabourToWork = async (projectNo, workId, headLabourId, subLabourDe
  * Updates ONLY the sub-labour counts for a specific work log.
  * Merges with existing sub-labour details.
  */
-exports.updateSubLabourForWork = async (projectNo, workId, labourId, subLabourDetails) => {
+exports.updateSubLabourForWork = async (projectNo, workId, labourId, subLabourDetails, tenant_id) => {
     const workRef = worksCollection.doc(workId);
     const workDoc = await workRef.get();
     if (!workDoc.exists) throw new Error("Work log not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && workDoc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const docData = workDoc.data();
     if (docData.projectNo !== projectNo) {
@@ -357,10 +363,11 @@ exports.updateSubLabourForWork = async (projectNo, workId, labourId, subLabourDe
 /**
  * Edit a single sub-labour type count
  */
-exports.editSubLabourCount = async (projectNo, workId, labourId, type, count) => {
+exports.editSubLabourCount = async (projectNo, workId, labourId, type, count, tenant_id) => {
     const workRef = worksCollection.doc(workId);
     const workDoc = await workRef.get();
     if (!workDoc.exists) throw new Error("Work log not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && workDoc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const docData = workDoc.data();
     if (docData.projectNo !== projectNo) {
@@ -397,10 +404,11 @@ exports.editSubLabourCount = async (projectNo, workId, labourId, type, count) =>
 /**
  * Delete a specific sub-labour type entry
  */
-exports.deleteSubLabourType = async (projectNo, workId, labourId, type) => {
+exports.deleteSubLabourType = async (projectNo, workId, labourId, type, tenant_id) => {
     const workRef = worksCollection.doc(workId);
     const workDoc = await workRef.get();
     if (!workDoc.exists) throw new Error("Work log not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && workDoc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const docData = workDoc.data();
     if (docData.projectNo !== projectNo) {
@@ -441,10 +449,13 @@ exports.deleteSubLabourType = async (projectNo, workId, labourId, type) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // GET WORKS (with live labour enrichment)
 // ═══════════════════════════════════════════════════════════════════════════
-exports.getWorks = async (projectNo) => {
+exports.getWorks = async (projectNo, tenant_id) => {
     let query = worksCollection;
     if (projectNo) {
         query = query.where("projectNo", "==", projectNo);
+    }
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
     }
     const snapshot = await query.get();
     let works = snapshot.docs.map((doc) => ({ workId: doc.id, ...doc.data() }));
@@ -487,9 +498,10 @@ exports.getWorks = async (projectNo) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // OPTIMIZED: Fast getWorkById - Only process what exists
 // ═══════════════════════════════════════════════════════════════════════════
-exports.getWorkById = async (workId, projectNo = null, labourId = null) => {
+exports.getWorkById = async (workId, projectNo = null, tenant_id = null, labourId = null) => {
     const doc = await worksCollection.doc(workId).get();
     if (!doc.exists) throw new Error("Work log not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     let work = { workId: doc.id, ...doc.data() };
 
@@ -540,10 +552,11 @@ exports.getWorkById = async (workId, projectNo = null, labourId = null) => {
 
 
 
-exports.updateWork = async (workId, updateData) => {
+exports.updateWork = async (workId, updateData, tenant_id) => {
     const docRef = worksCollection.doc(workId);
     const doc = await docRef.get();
     if (!doc.exists) throw new Error("Work log not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     delete updateData.workId;
     delete updateData.createdAt;
@@ -563,9 +576,11 @@ exports.updateWork = async (workId, updateData) => {
     return { workId: updated.id, ...updated.data() };
 };
 
-exports.deleteWork = async (workId) => {
+exports.deleteWork = async (workId, tenant_id) => {
     const docRef = worksCollection.doc(workId);
-    if (!(await docRef.get()).exists) throw new Error("Work log not found");
+    const doc = await docRef.get();
+    if (!doc.exists) throw new Error("Work log not found");
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
     await docRef.delete();
     return { message: "Work log deleted successfully" };
 };
@@ -601,7 +616,7 @@ const _generateDateVariations = (fromStr, toStr) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // FETCH WORK ON A SINGLE DATE
 // ═══════════════════════════════════════════════════════════════════════════
-exports.getWorkByDate = async (projectNo, date) => {
+exports.getWorkByDate = async (projectNo, date, tenant_id) => {
     if (!projectNo) throw new Error("projectNo is required");
     if (!date) throw new Error("date is required (DD-MM-YYYY or YYYY-MM-DD format)");
 
@@ -613,10 +628,13 @@ exports.getWorkByDate = async (projectNo, date) => {
     const ddMMYYYY = parsedD.format("DD-MM-YYYY");
     const yyyyMMDD = parsedD.format("YYYY-MM-DD");
 
-    const snapshot = await worksCollection
+    let query = worksCollection
         .where("projectNo", "==", projectNo)
-        .where("date", "in", [ddMMYYYY, yyyyMMDD])
-        .get();
+        .where("date", "in", [ddMMYYYY, yyyyMMDD]);
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
 
     if (snapshot.empty) return [];
 
@@ -641,7 +659,7 @@ exports.getWorkByDate = async (projectNo, date) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // FETCH WORKS IN A DATE RANGE (Week View)
 // ═══════════════════════════════════════════════════════════════════════════
-exports.getWorksByWeek = async (projectNo, fromDate, toDate) => {
+exports.getWorksByWeek = async (projectNo, fromDate, toDate, tenant_id) => {
     if (!projectNo) throw new Error("projectNo is required");
     if (!fromDate || !toDate) throw new Error("Both 'from' and 'to' dates are required");
 
@@ -661,12 +679,15 @@ exports.getWorksByWeek = async (projectNo, fromDate, toDate) => {
     }
 
     const allSnaps = await Promise.all(
-        chunks.map(chunk =>
-            worksCollection
+        chunks.map(chunk => {
+            let query = worksCollection
                 .where("projectNo", "==", projectNo)
-                .where("date", "in", chunk)
-                .get()
-        )
+                .where("date", "in", chunk);
+            if (tenant_id && tenant_id !== 'GLOBAL') {
+                query = query.where("tenant_id", "==", tenant_id);
+            }
+            return query.get();
+        })
     );
 
     const workMap = new Map();
@@ -706,7 +727,7 @@ exports.getWorksByWeek = async (projectNo, fromDate, toDate) => {
 // REVERSE LOOKUP — all works/projects a labour was assigned to
 // GET /api/labours/master/:labourId/works
 // ═══════════════════════════════════════════════════════════════════════════
-exports.getWorksByLabour = async (labourId) => {
+exports.getWorksByLabour = async (labourId, tenant_id) => {
     if (!labourId) throw new Error("labourId is required");
 
     // Fetch master labour to get name for legacy string-based query
@@ -724,15 +745,27 @@ exports.getWorksByLabour = async (labourId) => {
         legacyNames = Array.from(new Set([raw, lower, upper, title]));
     }
 
+    let q1 = worksCollection.orderBy(`labourDetails.${labourId}.headLabourId`);
+    let q2 = worksCollection.where("labourDetails.headLabourId", "==", labourId);
+
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        q1 = q1.where("tenant_id", "==", tenant_id);
+        q2 = q2.where("tenant_id", "==", tenant_id);
+    }
+
     const queries = [
         // Modern keyed-map format — uses orderBy as "field exists" check
-        worksCollection.orderBy(`labourDetails.${labourId}.headLabourId`).get(),
+        q1.get(),
         // Legacy flat format (pre-migration)
-        worksCollection.where("labourDetails.headLabourId", "==", labourId).get(),
+        q2.get(),
     ];
 
     if (legacyNames.length > 0) {
-        queries.push(worksCollection.where("labourName", "in", legacyNames).get());
+        let q3 = worksCollection.where("labourName", "in", legacyNames);
+        if (tenant_id && tenant_id !== 'GLOBAL') {
+            q3 = q3.where("tenant_id", "==", tenant_id);
+        }
+        queries.push(q3.get());
     }
 
     const snapshots = await Promise.all(queries);
@@ -851,7 +884,7 @@ exports.getWorksByLabour = async (labourId) => {
 
 
 
-exports.updateWorkDate = async (projectNo, workId, newDate) => {
+exports.updateWorkDate = async (projectNo, workId, newDate, tenant_id) => {
     if (!projectNo) throw new Error("projectNo is required");
     if (!workId) throw new Error("workId is required");
     if (!newDate) throw new Error("date is required");
@@ -891,6 +924,7 @@ exports.updateWorkDate = async (projectNo, workId, newDate) => {
     if (doc.data().projectNo !== projectNo) {
         throw new Error(`Work '${workId}' does not belong to project '${projectNo}'`);
     }
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     await docRef.update({
         date: formattedDate,

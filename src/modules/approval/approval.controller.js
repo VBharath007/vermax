@@ -7,7 +7,7 @@ const projectTypeCollection = db.collection("projectTypeOptions");
 
 exports.getNextApprovalNo = async (req, res) => {
   try {
-    const nextNo = await approvalService.getNextApprovalNo();
+    const nextNo = await approvalService.getNextApprovalNo(req.tenantId);
 
     res.json({
       success: true,
@@ -22,7 +22,7 @@ exports.getNextApprovalNo = async (req, res) => {
 };
 exports.createApproval = async (req, res) => {
     try {
-        const result = await approvalService.createApproval(req.body);
+        const result = await approvalService.createApproval(req.body, req.tenantId);
         res.status(201).json({ message: "Approval created successfully", data: result });
     } catch (error) {
         res.status(400).json({ error: error.message });
@@ -31,7 +31,7 @@ exports.createApproval = async (req, res) => {
 
 exports.getApprovals = async (req, res) => {
     try {
-        const result = await approvalService.getApprovals();
+        const result = await approvalService.getApprovals(req.tenantId);
         res.status(200).json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -40,7 +40,7 @@ exports.getApprovals = async (req, res) => {
 
 exports.getApprovalById = async (req, res) => {
     try {
-        const result = await approvalService.getApprovalById(req.params.id);
+        const result = await approvalService.getApprovalById(req.params.id, req.tenantId);
         res.status(200).json(result);
     } catch (error) {
         res.status(404).json({ error: error.message });
@@ -49,7 +49,7 @@ exports.getApprovalById = async (req, res) => {
 
 exports.updateApproval = async (req, res) => {
     try {
-        const result = await approvalService.updateApproval(req.params.id, req.body);
+        const result = await approvalService.updateApproval(req.params.id, req.body, req.tenantId);
         res.status(200).json({ message: "Approval updated successfully", data: result });
     } catch (error) {
         res.status(400).json({ error: error.message });
@@ -59,7 +59,7 @@ exports.updateApproval = async (req, res) => {
 // --- Advances --- //
 exports.addAdvance = async (req, res) => {
     try {
-        const result = await approvalService.addAdvance(req.params.id, req.body);
+        const result = await approvalService.addAdvance(req.params.id, req.body, req.tenantId);
         res.status(201).json({ message: "Advance payment(s) recorded successfully", data: result });
     } catch (error) {
         res.status(400).json({ error: error.message });
@@ -68,7 +68,7 @@ exports.addAdvance = async (req, res) => {
 
 exports.getAdvances = async (req, res) => {
     try {
-        const result = await approvalService.getAdvances(req.params.id);
+        const result = await approvalService.getAdvances(req.params.id, req.tenantId);
         res.status(200).json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -78,7 +78,7 @@ exports.getAdvances = async (req, res) => {
 // --- Expenses --- //
 exports.addExpense = async (req, res) => {
     try {
-        const result = await approvalService.addExpense(req.params.id, req.body);
+        const result = await approvalService.addExpense(req.params.id, req.body, req.tenantId);
         res.status(201).json({ message: "Expense(s) recorded successfully", data: result });
     } catch (error) {
         res.status(400).json({ error: error.message });
@@ -87,7 +87,7 @@ exports.addExpense = async (req, res) => {
 
 exports.getExpenses = async (req, res) => {
     try {
-        const result = await approvalService.getExpenses(req.params.id);
+        const result = await approvalService.getExpenses(req.params.id, req.tenantId);
         res.status(200).json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -100,7 +100,7 @@ exports.updateStatus = async (req, res) => {
         const { currentStatus } = req.body;
         if (!currentStatus) throw new Error("currentStatus is required");
 
-        const result = await approvalService.updateStatus(req.params.id, currentStatus);
+        const result = await approvalService.updateStatus(req.params.id, currentStatus, req.tenantId);
         res.status(200).json({ message: "Status updated successfully", data: result });
     } catch (error) {
         res.status(400).json({ error: error.message });
@@ -110,7 +110,7 @@ exports.updateStatus = async (req, res) => {
 exports.updateExpense = async (req, res) => {
     try {
         const { expenseId } = req.params;
-        const result = await approvalService.updateExpense(expenseId, req.body);
+        const result = await approvalService.updateExpense(expenseId, req.body, req.tenantId);
         res.status(200).json(result);
     } catch (error) {
         console.error("Update Expense Error:", error);
@@ -127,6 +127,9 @@ exports.deleteExpense = async (req, res) => {
 
         if (!doc.exists) {
             return res.status(404).json({ message: "Expense not found" });
+        }
+        if (req.tenantId && req.tenantId !== 'GLOBAL' && doc.data().tenant_id !== req.tenantId) {
+            return res.status(403).json({ message: "Unauthorized" });
         }
 
         await docRef.delete();
@@ -146,6 +149,9 @@ exports.deleteApproval = async (req, res) => {
 
         if (!approvalDoc.exists) {
             return res.status(404).json({ message: "Approval not found" });
+        }
+        if (req.tenantId && req.tenantId !== 'GLOBAL' && approvalDoc.data().tenant_id !== req.tenantId) {
+            return res.status(403).json({ message: "Unauthorized" });
         }
 
         const advancesSnap = await approvalAdvancesCollection
@@ -188,6 +194,9 @@ exports.updateAdvance = async (req, res) => {
         if (!doc.exists) {
             return res.status(404).json({ message: "Advance not found" });
         }
+        if (req.tenantId && req.tenantId !== 'GLOBAL' && doc.data().tenant_id !== req.tenantId) {
+            return res.status(403).json({ message: "Unauthorized" });
+        }
 
         const updateData = {};
 
@@ -218,6 +227,9 @@ exports.deleteAdvance = async (req, res) => {
         if (!doc.exists) {
             return res.status(404).json({ message: "Advance not found" });
         }
+        if (req.tenantId && req.tenantId !== 'GLOBAL' && doc.data().tenant_id !== req.tenantId) {
+            return res.status(403).json({ message: "Unauthorized" });
+        }
 
         await docRef.delete();
         res.json({ message: "Advance deleted successfully" });
@@ -238,6 +250,9 @@ exports.updateTotalFees = async (req, res) => {
         if (!doc.exists) {
             return res.status(404).json({ message: "Approval not found" });
         }
+        if (req.tenantId && req.tenantId !== 'GLOBAL' && doc.data().tenant_id !== req.tenantId) {
+            return res.status(403).json({ message: "Unauthorized" });
+        }
 
         await docRef.update({
             "financialDetails.totalFees": Number(totalFees)
@@ -252,7 +267,7 @@ exports.updateTotalFees = async (req, res) => {
 
 exports.addProjectType = async (req, res) => {
     try {
-        const result = await approvalService.addProjectType(req.body.name);
+        const result = await approvalService.addProjectType(req.body.name, req.tenantId);
         res.status(200).json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -261,7 +276,7 @@ exports.addProjectType = async (req, res) => {
 
 exports.confirmProjectType = async (req, res) => {
     try {
-        const result = await approvalService.confirmProjectType(req.params.id);
+        const result = await approvalService.confirmProjectType(req.params.id, req.tenantId);
         res.status(200).json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -270,7 +285,7 @@ exports.confirmProjectType = async (req, res) => {
 
 exports.deleteProjectType = async (req, res) => {
     try {
-        const result = await approvalService.deleteProjectType(req.params.id);
+        const result = await approvalService.deleteProjectType(req.params.id, req.tenantId);
         res.status(200).json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -280,7 +295,7 @@ exports.deleteProjectType = async (req, res) => {
 
 exports.getProjectTypes = async (req, res) => {
     try {
-        const result = await approvalService.getProjectTypes();
+        const result = await approvalService.getProjectTypes(req.tenantId);
         res.status(200).json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -291,7 +306,7 @@ exports.getProjectTypes = async (req, res) => {
 exports.getSummaryByDateRange = async (req, res) => {
     try {
         const { startDate, endDate } = req.query;
-        const result = await approvalService.getSummaryByDateRange(startDate, endDate);
+        const result = await approvalService.getSummaryByDateRange(startDate, endDate, req.tenantId);
         res.status(200).json(result);
     } catch (error) {
         res.status(400).json({ error: error.message });

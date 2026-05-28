@@ -10,7 +10,7 @@ const createDefaultAdmin = async () => {
         if (!doc.exists) {
             await adminRef.set({
                 empId: "ADMIN001",
-                name: "vvconstruction",
+                name: "VERMAX",
                 email: process.env.DEFAULT_ADMIN_EMAIL,
                 password: process.env.DEFAULT_ADMIN_PASSWORD,
                 role: "admin",
@@ -19,7 +19,8 @@ const createDefaultAdmin = async () => {
 
             console.log("✅ Default Admin Created");
         } else {
-            console.log("ℹ Default Admin Already Exists");
+            await adminRef.update({ name: "VERMAX" });
+            console.log("ℹ Default Admin Already Exists (Name updated to VERMAX)");
         }
 
     } catch (error) {

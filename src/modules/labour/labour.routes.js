@@ -4,8 +4,11 @@ const labourController = require("./labour.controller");
 const workController = require("../work/work.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorize } = require("../../middleware/role.middleware");
+const { tenantContext } = require("../../middleware/tenant.middleware");
 
-const isAdmin = [verifyToken, authorize(["admin"])];
+// ⚠️ tenantContext MUST be included so req.tenantId is set before reaching any service.
+// Without it, req.tenantId is undefined → Firestore .where("tenant_id", "==", undefined) → 500
+const isAdmin = [verifyToken, authorize(["admin"]), tenantContext];
 
 // ─── Head Labour Master CRUD ───
 router.post("/master", isAdmin, labourController.addMasterLabour);

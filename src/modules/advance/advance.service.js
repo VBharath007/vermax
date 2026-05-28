@@ -13,10 +13,11 @@ const banksCollection = db.collection("banks");
  *   - Create transaction in banks/{bankId}/transactions subcollection
  *   - Save to advances collection
  */
-exports.createAdvance = async (advanceData) => {
+exports.createAdvance = async (advanceData, tenant_id) => {
     if (!advanceData.projectNo) {
         throw new Error("projectNo is required");
     }
+    if (!tenant_id) throw new Error("tenant_id is required");
     
     if (!advanceData.amountReceived) {
         throw new Error("amountReceived is required");
@@ -94,6 +95,7 @@ exports.createAdvance = async (advanceData) => {
     }
 
     // 3. Save advance record to main advances collection
+    advanceData.tenant_id = tenant_id;
     const docRef = await advancesCollection.add(advanceData);
 
     // 4. If BANK payment, update transaction with advance ID reference
@@ -113,12 +115,15 @@ exports.createAdvance = async (advanceData) => {
 /**
  * Get all advances for a project or globally
  */
-exports.getAdvances = async (projectNo) => {
+exports.getAdvances = async (projectNo, tenant_id) => {
     let query = advancesCollection;
     if (projectNo) {
         query = query.where("projectNo", "==", projectNo);
     }
-    const snapshot = await query.orderBy("createdAt", "desc").get();
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        query = query.where("tenant_id", "==", tenant_id);
+    }
+    const snapshot = await query.get();
     const advances = [];
     let totalProjectAmount = 0;
 
@@ -139,6 +144,9 @@ exports.getAdvances = async (projectNo) => {
         });
     });
 
+    // Sort in memory: newest first (createdAt descending)
+    advances.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
     return {
         advances,
         totalAdvance: totalProjectAmount
@@ -149,12 +157,13 @@ exports.getAdvances = async (projectNo) => {
  * Update an advance record
  * If amount or paymentMethod changes, update bank balance and transactions accordingly
  */
-exports.updateAdvance = async (id, updateData) => {
+exports.updateAdvance = async (id, updateData, tenant_id) => {
     const docRef = advancesCollection.doc(id);
     const doc = await docRef.get();
     if (!doc.exists) {
         throw new Error("Advance record not found");
     }
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const existingData = doc.data();
 
@@ -315,12 +324,13 @@ exports.updateAdvance = async (id, updateData) => {
  * Delete an advance record
  * If paymentMethod was BANK, revert the bank balance and create reverse transaction
  */
-exports.deleteAdvance = async (id) => {
+exports.deleteAdvance = async (id, tenant_id) => {
     const docRef = advancesCollection.doc(id);
     const doc = await docRef.get();
     if (!doc.exists) {
         throw new Error("Advance record not found");
     }
+    if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const advanceData = doc.data();
 
@@ -370,8 +380,13 @@ exports.deleteAdvance = async (id) => {
 /**
  * Get bank transaction history for a specific bank
  */
-exports.getBankTransactionHistory = async (bankId) => {
+exports.getBankTransactionHistory = async (bankId, tenant_id) => {
     try {
+        const bankDoc = await banksCollection.doc(bankId).get();
+        if (bankDoc.exists && tenant_id && tenant_id !== 'GLOBAL' && bankDoc.data().tenant_id !== tenant_id) {
+            throw new Error("Unauthorized");
+        }
+
         const snapshot = await banksCollection
             .doc(bankId)
             .collection("transactions")

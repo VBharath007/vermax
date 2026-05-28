@@ -5,7 +5,7 @@ const bankService = require("./bank.service");
 // ─────────────────────────────────────────────
 exports.getAllBanks = async (req, res) => {
   try {
-    const result = await bankService.getAllBanksWithSummary();
+    const result = await bankService.getAllBanksWithSummary(req.tenantId);
 
     res.status(200).json({
       success: true,
@@ -25,7 +25,7 @@ exports.getAllBanks = async (req, res) => {
 // ─────────────────────────────────────────────
 exports.getBankById = async (req, res) => {
   try {
-    const result = await bankService.getBankById(req.params.bankId);
+    const result = await bankService.getBankById(req.params.bankId, req.tenantId);
 
     res.status(200).json({
       success: true,
@@ -44,7 +44,7 @@ exports.getBankById = async (req, res) => {
 // ─────────────────────────────────────────────
 exports.getBankTransactions = async (req, res) => {
   try {
-    const result = await bankService.getBankTransactions(req.params.bankId);
+    const result = await bankService.getBankTransactions(req.params.bankId, req.tenantId);
 
     res.status(200).json({
       success: true,
@@ -70,7 +70,7 @@ exports.createBank = async (req, res) => {
       });
     }
 
-    const result = await bankService.createBank(data);
+    const result = await bankService.createBank(data, req.tenantId);
 
     res.status(201).json({
       success: true,
@@ -91,7 +91,7 @@ exports.createBank = async (req, res) => {
 // ─────────────────────────────────────────────
 exports.getGlobalTransactions = async (req, res) => {
   try {
-    const result = await bankService.getGlobalTransactions();
+    const result = await bankService.getGlobalTransactions(req.tenantId);
 
     res.status(200).json({
       success: true,
@@ -110,7 +110,7 @@ exports.getGlobalTransactions = async (req, res) => {
 
 exports.updateBank = async (req, res, next) => {
   try {
-    const data = await bankService.updateBank(req.params.bankId, req.body);
+    const data = await bankService.updateBank(req.params.bankId, req.body, req.tenantId);
     res.json({ success: true, data });
   } catch (err) {
     next(err);
@@ -131,7 +131,8 @@ exports.updateTransaction = async (req, res, next) => {
     const data = await bankService.updateTransaction(
       req.params.bankId,
       req.params.txId,
-      req.body
+      req.body,
+      req.tenantId
     );
     res.json({ success: true, data });
   } catch (err) {
@@ -141,7 +142,7 @@ exports.updateTransaction = async (req, res, next) => {
 
 exports.deleteBank = async (req, res, next) => {
   try {
-    const result = await bankService.deleteBank(req.params.bankId);
+    const result = await bankService.deleteBank(req.params.bankId, req.tenantId);
     res.json({ success: true, ...result });
   } catch (err) {
     next(err);
@@ -152,7 +153,8 @@ exports.deleteTransaction = async (req, res, next) => {
   try {
     const result = await bankService.deleteTransaction(
       req.params.bankId,
-      req.params.txId
+      req.params.txId,
+      req.tenantId
     );
     res.json({ success: true, ...result });
   } catch (err) {
