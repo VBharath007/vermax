@@ -144,18 +144,29 @@ exports.deleteApproval = async (req, res) => {
     try {
         const { id } = req.params;
 
-        const approvalRef = approvalsCollection.doc(id);
-        const approvalDoc = await approvalRef.get();
+        let approvalRef = approvalsCollection.doc(id);
+        let approvalDoc = await approvalRef.get();
 
         if (!approvalDoc.exists) {
-            return res.status(404).json({ message: "Approval not found" });
+            let query = approvalsCollection.where("projectNo", "==", id);
+            if (req.tenantId && req.tenantId !== 'GLOBAL') {
+                query = query.where("tenant_id", "==", req.tenantId);
+            }
+            const snap = await query.get();
+            if (snap.empty) {
+                return res.status(404).json({ message: "Approval not found" });
+            }
+            approvalDoc = snap.docs[0];
+            approvalRef = approvalDoc.ref;
         }
         if (req.tenantId && req.tenantId !== 'GLOBAL' && approvalDoc.data().tenant_id !== req.tenantId) {
             return res.status(403).json({ message: "Unauthorized" });
         }
 
+        const docId = approvalDoc.id;
+
         const advancesSnap = await approvalAdvancesCollection
-            .where("approvalId", "==", id)
+            .where("approvalId", "==", docId)
             .get();
 
         const batch = db.batch();
@@ -165,7 +176,7 @@ exports.deleteApproval = async (req, res) => {
         });
 
         const expensesSnap = await approvalExpensesCollection
-            .where("approvalId", "==", id)
+            .where("approvalId", "==", docId)
             .get();
 
         expensesSnap.forEach(doc => {
@@ -244,11 +255,20 @@ exports.updateTotalFees = async (req, res) => {
         const { id } = req.params;
         const { totalFees } = req.body;
 
-        const docRef = approvalsCollection.doc(id);
-        const doc = await docRef.get();
+        let docRef = approvalsCollection.doc(id);
+        let doc = await docRef.get();
 
         if (!doc.exists) {
-            return res.status(404).json({ message: "Approval not found" });
+            let query = approvalsCollection.where("projectNo", "==", id);
+            if (req.tenantId && req.tenantId !== 'GLOBAL') {
+                query = query.where("tenant_id", "==", req.tenantId);
+            }
+            const snap = await query.get();
+            if (snap.empty) {
+                return res.status(404).json({ message: "Approval not found" });
+            }
+            doc = snap.docs[0];
+            docRef = doc.ref;
         }
         if (req.tenantId && req.tenantId !== 'GLOBAL' && doc.data().tenant_id !== req.tenantId) {
             return res.status(403).json({ message: "Unauthorized" });

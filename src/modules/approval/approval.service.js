@@ -101,7 +101,8 @@ exports.createApproval = async (data, tenant_id) => {
     const pType = data.projectType;
     if (pType) await ensureProjectTypeExists(pType);
 
-    const docRef = approvalsCollection.doc(data.projectNo);
+    const docId = `${tenant_id}_${data.projectNo}`;
+    const docRef = approvalsCollection.doc(docId);
     const doc = await docRef.get();
     if (doc.exists) {
         throw new Error("Approval for this projectNo already exists");
@@ -118,7 +119,7 @@ exports.createApproval = async (data, tenant_id) => {
     };
 
     await docRef.set(newApproval);
-    return { id: data.projectNo, ...newApproval };
+    return { id: docId, ...newApproval };
 };
 
 exports.getApprovals = async (tenant_id) => {
@@ -139,24 +140,34 @@ exports.getApprovals = async (tenant_id) => {
     // DESC order — biggest projectNo first
     approvals.sort((a, b) => b._index - a._index);
 
-    return approvals.map(a => {
-        delete a._index;
-        return a;
-    });
+    // Calculate calculations dynamically for each approval in the list
+    const results = await Promise.all(
+        approvals.map(async (a) => {
+            const calcs = await getApprovalCalculations(a.id, a.financialDetails?.totalFees);
+            delete a._index;
+            return { ...a, calculations: calcs };
+        })
+    );
+
+    return results;
 };
 
 
 exports.getApprovalById = async (id, tenant_id) => {
     let doc = await approvalsCollection.doc(id).get();
     if (!doc.exists) {
-        const snap = await approvalsCollection.where("projectNo", "==", id).get();
+        let query = approvalsCollection.where("projectNo", "==", id);
+        if (tenant_id && tenant_id !== 'GLOBAL') {
+            query = query.where("tenant_id", "==", tenant_id);
+        }
+        const snap = await query.get();
         if (snap.empty) throw new Error("Approval not found");
         doc = snap.docs[0];
     }
     if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     const data = doc.data();
-    const calcs = await getApprovalCalculations(id, data.financialDetails?.totalFees);
+    const calcs = await getApprovalCalculations(doc.id, data.financialDetails?.totalFees);
     return { id: doc.id, ...data, calculations: calcs };
 };
 
@@ -164,7 +175,11 @@ exports.updateApproval = async (id, updateData, tenant_id) => {
     let docRef = approvalsCollection.doc(id);
     let doc = await docRef.get();
     if (!doc.exists) {
-        const snap = await approvalsCollection.where("projectNo", "==", id).get();
+        let query = approvalsCollection.where("projectNo", "==", id);
+        if (tenant_id && tenant_id !== 'GLOBAL') {
+            query = query.where("tenant_id", "==", tenant_id);
+        }
+        const snap = await query.get();
         if (snap.empty) throw new Error("Approval not found");
         docRef = snap.docs[0].ref;
         doc = snap.docs[0];
@@ -179,7 +194,7 @@ exports.updateApproval = async (id, updateData, tenant_id) => {
     // ✅ FIX: workStatus stays in updateData as its own field, NOT deleted
 
     await docRef.update(updateData);
-    return this.getApprovalById(id, tenant_id);
+    return this.getApprovalById(doc.id, tenant_id);
 };
 
 exports.getNextApprovalNo = async (tenant_id) => {
@@ -216,7 +231,11 @@ exports.addAdvance = async (id, payload, tenant_id) => {
     let doc = await docRef.get();
 
     if (!doc.exists) {
-        const snap = await approvalsCollection.where("projectNo", "==", id).get();
+        let query = approvalsCollection.where("projectNo", "==", id);
+        if (tenant_id && tenant_id !== 'GLOBAL') {
+            query = query.where("tenant_id", "==", tenant_id);
+        }
+        const snap = await query.get();
         if (snap.empty) throw new Error("Approval not found");
         docRef = snap.docs[0].ref;
         doc = snap.docs[0];
@@ -227,7 +246,7 @@ exports.addAdvance = async (id, payload, tenant_id) => {
     const advancesArray = Array.isArray(advances) ? advances : [advances];
 
     const additionalAmount = advancesArray.reduce((sum, a) => sum + (Number(a.amountReceived) || 0), 0);
-    const currentApproval = await this.getApprovalById(id, tenant_id);
+    const currentApproval = await this.getApprovalById(doc.id, tenant_id);
     const totalFees = Number(currentApproval.financialDetails?.totalFees) || 0;
     const currentlyPaid = currentApproval.calculations.advancedPaid;
 
@@ -241,7 +260,7 @@ exports.addAdvance = async (id, payload, tenant_id) => {
     advancesArray.forEach(advance => {
         const advRef = approvalAdvancesCollection.doc();
         const data = {
-            approvalId: id,
+            approvalId: doc.id,
             sno: advance.sno,
             date: advance.date || getCurrentDate(),
             amountReceived: Number(advance.amountReceived) || 0,
@@ -259,7 +278,23 @@ exports.addAdvance = async (id, payload, tenant_id) => {
 };
 
 exports.getAdvances = async (id, tenant_id) => {
-    let query = approvalAdvancesCollection.where("approvalId", "==", id);
+    let docRef = approvalsCollection.doc(id);
+    let doc = await docRef.get();
+    let approvalId = id;
+    if (!doc.exists) {
+        let query = approvalsCollection.where("projectNo", "==", id);
+        if (tenant_id && tenant_id !== 'GLOBAL') {
+            query = query.where("tenant_id", "==", tenant_id);
+        }
+        const snap = await query.get();
+        if (!snap.empty) {
+            approvalId = snap.docs[0].id;
+        }
+    } else {
+        approvalId = doc.id;
+    }
+
+    let query = approvalAdvancesCollection.where("approvalId", "==", approvalId);
     if (tenant_id && tenant_id !== 'GLOBAL') {
         query = query.where("tenant_id", "==", tenant_id);
     }
@@ -273,7 +308,11 @@ exports.addExpense = async (id, payload, tenant_id) => {
     let doc = await docRef.get();
 
     if (!doc.exists) {
-        const snap = await approvalsCollection.where("projectNo", "==", id).get();
+        let query = approvalsCollection.where("projectNo", "==", id);
+        if (tenant_id && tenant_id !== 'GLOBAL') {
+            query = query.where("tenant_id", "==", tenant_id);
+        }
+        const snap = await query.get();
         if (snap.empty) throw new Error("Approval not found");
         docRef = snap.docs[0].ref;
         doc = snap.docs[0];
@@ -288,7 +327,7 @@ exports.addExpense = async (id, payload, tenant_id) => {
     expensesArray.forEach(expense => {
         const expRef = approvalExpensesCollection.doc();
         const data = {
-            approvalId: id,
+            approvalId: doc.id,
             sno: expense.sno,
             date: expense.date || getCurrentDate(),
             particularRemark: expense.particularRemark || "",
@@ -305,7 +344,23 @@ exports.addExpense = async (id, payload, tenant_id) => {
 };
 
 exports.getExpenses = async (id, tenant_id) => {
-    let query = approvalExpensesCollection.where("approvalId", "==", id);
+    let docRef = approvalsCollection.doc(id);
+    let doc = await docRef.get();
+    let approvalId = id;
+    if (!doc.exists) {
+        let query = approvalsCollection.where("projectNo", "==", id);
+        if (tenant_id && tenant_id !== 'GLOBAL') {
+            query = query.where("tenant_id", "==", tenant_id);
+        }
+        const snap = await query.get();
+        if (!snap.empty) {
+            approvalId = snap.docs[0].id;
+        }
+    } else {
+        approvalId = doc.id;
+    }
+
+    let query = approvalExpensesCollection.where("approvalId", "==", approvalId);
     if (tenant_id && tenant_id !== 'GLOBAL') {
         query = query.where("tenant_id", "==", tenant_id);
     }
@@ -319,7 +374,11 @@ exports.updateStatus = async (id, currentStatus, tenant_id) => {
     let doc = await docRef.get();
 
     if (!doc.exists) {
-        const snap = await approvalsCollection.where("projectNo", "==", id).get();
+        let query = approvalsCollection.where("projectNo", "==", id);
+        if (tenant_id && tenant_id !== 'GLOBAL') {
+            query = query.where("tenant_id", "==", tenant_id);
+        }
+        const snap = await query.get();
         if (snap.empty) throw new Error("Approval not found");
         docRef = snap.docs[0].ref;
         doc = snap.docs[0];
@@ -330,7 +389,7 @@ exports.updateStatus = async (id, currentStatus, tenant_id) => {
         "statusTracking.currentStatus": currentStatus
     });
 
-    return this.getApprovalById(id, tenant_id);
+    return this.getApprovalById(doc.id, tenant_id);
 };
 
 exports.updateExpense = async (expenseId, updateData, tenant_id) => {
