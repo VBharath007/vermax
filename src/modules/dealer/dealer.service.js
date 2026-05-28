@@ -825,7 +825,7 @@ exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method,
             const appliedAmount = b.newPaid - (Number(b.data.paidAmount) || 0);
             if (appliedAmount <= 0) continue;
 
-            await siteExpensesCollection.add({
+            const expenseDoc = {
                 projectNo: b.data.projectNo,
                 amount: appliedAmount,
                 particular: `Material Payment – ${b.data.materialName}`,
@@ -840,7 +840,12 @@ exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method,
                 date: displayDate,
                 createdAt: paymentDateISO,
                 method: paymentMethod,
-            });
+            };
+            if (tenant_id && tenant_id !== 'GLOBAL') {
+                expenseDoc.tenant_id = tenant_id;
+            }
+
+            await siteExpensesCollection.add(expenseDoc);
         } catch (err) {
             console.error("Expense sync failed:", err.message);
         }
@@ -849,7 +854,7 @@ exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method,
     // ─────────────────────────────────────────────
     // 6. STORE PAYMENT LOG
     // ─────────────────────────────────────────────
-    await paymentsCollection.add({
+    const paymentDoc = {
         dealerContact: phoneNumber,
         projectNo,
         amountPaid: paymentAmount,
@@ -859,7 +864,11 @@ exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method,
         bankTransactionId: bankTransactionId || null,
         date: paymentDateISO,
         type: "Payment",
-    });
+    };
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        paymentDoc.tenant_id = tenant_id;
+    }
+    await paymentsCollection.add(paymentDoc);
 
     // ─────────────────────────────────────────────
     // 7. RESPONSE
