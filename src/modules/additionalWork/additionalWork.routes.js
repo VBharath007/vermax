@@ -2,22 +2,25 @@ const express = require("express");
 const router = express.Router();
 const additionalWorkController = require("./additionalWork.controller");
 const { verifyToken, isAdmin } = require("../../middleware/auth.middleware");
+const { tenantContext } = require("../../middleware/tenant.middleware");
+
+const isAuth = [verifyToken, tenantContext, isAdmin];
 
 // ─── Additional Work Payment CRUD ───
 
 // POST /api/additional-works
-router.post("/", [verifyToken, isAdmin], additionalWorkController.createAdditionalWork);
+router.post("/", isAuth, additionalWorkController.createAdditionalWork);
 
 // GET /api/additional-works?projectNo=PRO001
-router.get("/", [verifyToken, isAdmin], additionalWorkController.getAllAdditionalWorks);
+router.get("/", isAuth, additionalWorkController.getAllAdditionalWorks);
 
 // GET /api/additional-works/:id
-router.get("/:id", [verifyToken, isAdmin], additionalWorkController.getAdditionalWorkById);
+router.get("/:id", isAuth, additionalWorkController.getAdditionalWorkById);
 
 // PUT /api/additional-works/:id
-router.put("/:id", [verifyToken, isAdmin], additionalWorkController.updateAdditionalWork);
+router.put("/:id", isAuth, additionalWorkController.updateAdditionalWork);
 
 // DELETE /api/additional-works/:id
-router.delete("/:id", [verifyToken, isAdmin], additionalWorkController.deleteAdditionalWork);
+router.delete("/:id", isAuth, additionalWorkController.deleteAdditionalWork);
 
 module.exports = router;
