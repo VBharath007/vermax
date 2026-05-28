@@ -4,9 +4,10 @@ const router = express.Router();
 const dealerController = require("./dealer.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorize } = require("../../middleware/role.middleware");
+const { tenantContext } = require("../../middleware/tenant.middleware");
 
 // Middleware for Admin protection
-const isAdmin = [verifyToken, authorize(["admin"])];
+const isAdmin = [verifyToken, authorize(["admin"]), tenantContext];
 
 // ============================================================================
 // DEALER ROUTES

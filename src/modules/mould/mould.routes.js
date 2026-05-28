@@ -4,8 +4,9 @@ const mouldController = require("./mould.controller");
 const mouldValidation = require("./mould.validation");
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorize } = require("../../middleware/role.middleware");
+const { tenantContext } = require("../../middleware/tenant.middleware");
 
-const isAdmin = [verifyToken, authorize(["admin"])];
+const isAdmin = [verifyToken, authorize(["admin"]), tenantContext];
 
 /** Purchase Routes */
 router.post("/purchase", isAdmin, mouldValidation.validatePurchase, mouldController.createPurchase);

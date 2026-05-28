@@ -3,6 +3,7 @@ const router = express.Router();
 const materialController = require("./material.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorize } = require("../../middleware/role.middleware");
+const { tenantContext } = require("../../middleware/tenant.middleware");
 const {
     validateRecordMaterialReceived,
     validateUpdateMaterialReceived,
@@ -11,7 +12,7 @@ const {
     validateCreateMaterialAdvance,
 } = require("./material.validation");
 
-const isAdmin = [verifyToken, authorize(["admin"])];
+const isAdmin = [verifyToken, authorize(["admin"]), tenantContext];
 
 // --- Material Master --- //
 // router.post("/", isAdmin, materialController.createMaterial);

@@ -1,11 +1,13 @@
 const router = require("express").Router();
 const ctrl = require("./list.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
-const { authorize } = require("../../middleware/role.middleware");
+const { tenantContext } = require("../../middleware/tenant.middleware");
 
-router.get("/",          ctrl.getLists);
-router.post("/",         ctrl.createList);
-router.put("/:id",       ctrl.updateList);
-router.delete("/:id",    ctrl.deleteList);
+const isAuth = [verifyToken, tenantContext];
+
+router.get("/",          isAuth, ctrl.getLists);
+router.post("/",         isAuth, ctrl.createList);
+router.put("/:id",       isAuth, ctrl.updateList);
+router.delete("/:id",    isAuth, ctrl.deleteList);
 
 module.exports = router;

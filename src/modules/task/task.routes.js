@@ -1,20 +1,22 @@
 const router = require("express").Router();
 const ctrl = require("./task.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
-const { authorize } = require("../../middleware/role.middleware");
+const { tenantContext } = require("../../middleware/tenant.middleware");
 
-router.get("/smart/counts",    ctrl.getSmartCounts);
-router.get("/smart/today",      ctrl.getToday);
-router.get("/smart/scheduled",  ctrl.getScheduled);
-router.get("/smart/flagged",    ctrl.getFlagged);
-router.get("/smart/completed",  ctrl.getCompleted);
-router.get("/list/:listId",     ctrl.getByList);
+const isAuth = [verifyToken, tenantContext];
 
-router.get("/",                ctrl.getAllTasks);
-router.post("/",               ctrl.createTask);
-router.get("/:id",             ctrl.getTaskById);
-router.put("/:id",             ctrl.updateTask);
-router.delete("/:id",          ctrl.deleteTask);
-router.patch("/:id/completed", ctrl.completeTask);
+router.get("/smart/counts",    isAuth, ctrl.getSmartCounts);
+router.get("/smart/today",      isAuth, ctrl.getToday);
+router.get("/smart/scheduled",  isAuth, ctrl.getScheduled);
+router.get("/smart/flagged",    isAuth, ctrl.getFlagged);
+router.get("/smart/completed",  isAuth, ctrl.getCompleted);
+router.get("/list/:listId",     isAuth, ctrl.getByList);
+
+router.get("/",                isAuth, ctrl.getAllTasks);
+router.post("/",               isAuth, ctrl.createTask);
+router.get("/:id",             isAuth, ctrl.getTaskById);
+router.put("/:id",             isAuth, ctrl.updateTask);
+router.delete("/:id",          isAuth, ctrl.deleteTask);
+router.patch("/:id/completed", isAuth, ctrl.completeTask);
 
 module.exports = router;

@@ -3,8 +3,9 @@
     const workController = require("./work.controller");
     const { verifyToken } = require("../../middleware/auth.middleware");
     const { authorize } = require("../../middleware/role.middleware");
+const { tenantContext } = require("../../middleware/tenant.middleware");
 
-    const isAdmin = [verifyToken, authorize(["admin"])];
+    const isAdmin = [verifyToken, authorize(["admin"]), tenantContext];
 
     // IMPORTANT: specific paths MUST come before /:workId to avoid route conflict
     router.get("/project/:projectNo/date/:date", isAdmin, workController.getWorkByDate);

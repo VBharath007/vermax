@@ -5,8 +5,9 @@ const router = express.Router();
 const bankController = require("./bank.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorize } = require("../../middleware/role.middleware");
+const { tenantContext } = require("../../middleware/tenant.middleware");
 
-const isAdmin = [verifyToken, authorize(["admin"])];
+const isAdmin = [verifyToken, authorize(["admin"]), tenantContext];
 
 // Bank account management
 router.get("/", isAdmin, bankController.getAllBanks);
