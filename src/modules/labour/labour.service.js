@@ -64,7 +64,7 @@ exports.addLabourMaster = async (data, tenant_id) => {
 
     const newLabour = { 
         name: normalizedName, 
-        contact: data.contact || "N/A", 
+        contact: data.contact || data.contactNumber || "N/A", 
         tenant_id,
         createdAt: now() 
     };
