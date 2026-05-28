@@ -290,12 +290,14 @@ exports.getDealerPaymentLog = async (phoneNumber, tenant_id) => {
 
     let dealerName = "";
     let totalBilled = 0;
+    let totalPaid = 0;
     const projectNos = [];
 
     billSnap.forEach(doc => {
         const data = doc.data();
         if (!dealerName && data.dealerName) dealerName = data.dealerName;
         totalBilled += Number(data.totalAmount) || 0;
+        totalPaid += Number(data.paidAmount) || 0;
         projectNos.push(data.projectNo);
     });
 
@@ -315,15 +317,19 @@ exports.getDealerPaymentLog = async (phoneNumber, tenant_id) => {
     });
     rawPayments.sort((a, b) => new Date(a.date) - new Date(b.date));
 
+    const totalPaymentsCollected = rawPayments.reduce((sum, p) => sum + p.amountPaid, 0);
+    const initialPaidOnBills = Math.max(0, totalPaid - totalPaymentsCollected);
+
     let runningTotal = 0;
     const paymentLog = rawPayments.map(p => {
         runningTotal += p.amountPaid;
+        const totalPaidSoFar = initialPaidOnBills + runningTotal;
         return {
             paymentId: p.paymentId,
             date: p.displayDate,
             amountPaid: p.amountPaid,
-            totalPaidSoFar: runningTotal,
-            remainingAfterThis: totalBilled - runningTotal,
+            totalPaidSoFar: totalPaidSoFar,
+            remainingAfterThis: Math.max(0, totalBilled - totalPaidSoFar),
             remark: p.remark,
         };
     });
@@ -624,14 +630,20 @@ exports.getDealerProjectPaymentLog = async (phoneNumber, projectNo, tenant_id) =
         runningMap[p.paymentId] = running;
     });
 
-    const paymentHistory = rawPayments.map(p => ({
-        paymentId: p.paymentId,
-        date: p.date,              // "17-03-2026"
-        amount: p.amount,
-        method: p.method,
-        totalPaidSoFar: runningMap[p.paymentId],
-        remainingAfterThis: totalBilled - runningMap[p.paymentId],
-    }));
+    const totalPaymentsCollected = rawPayments.reduce((sum, p) => sum + p.amount, 0);
+    const initialPaidOnBills = Math.max(0, totalPaid - totalPaymentsCollected);
+
+    const paymentHistory = rawPayments.map(p => {
+        const totalPaidSoFar = initialPaidOnBills + runningMap[p.paymentId];
+        return {
+            paymentId: p.paymentId,
+            date: p.date,              // "17-03-2026"
+            amount: p.amount,
+            method: p.method,
+            totalPaidSoFar: totalPaidSoFar,
+            remainingAfterThis: Math.max(0, totalBilled - totalPaidSoFar),
+        };
+    });
 
     const totalRemaining = totalBilled - totalPaid;
 
