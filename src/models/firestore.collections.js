@@ -23,6 +23,9 @@ module.exports = {
     LABOUR_PAYMENTS: "labourPayments",
     EXTRA_WORKS: "extraWorks",
     ADDITIONAL_WORKS: "additionalWorks",
+    SAFETY_COMPLIANCE: "safetyCompliance",
+    SITE_MANAGEMENT: "siteManagement",
+    ATTENDANCE: "attendance",
 
 
 };

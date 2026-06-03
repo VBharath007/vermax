@@ -49,6 +49,7 @@ exports.addEmployee = async (req, res) => {
             salaryPerDay: Number(salaryPerDay),
             password: hashedPassword,
             role: "employee",
+            approved: true,
             firstLogin: true,
             createdAt: new Date()
         };
@@ -61,6 +62,34 @@ exports.addEmployee = async (req, res) => {
 
         res.json({ message: "Employee Created Successfully" });
 
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+/* ================================
+   GET ALL EMPLOYEES (Admin Only)
+================================ */
+
+exports.getAllEmployees = async (req, res) => {
+    try {
+        const snapshot = await db.collection(USERS).where("role", "==", "employee").get();
+
+        const employees = [];
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            delete data.password;
+
+            if (!isGlobalTenant(req)) {
+                if (data.tenant_id === req.tenantId || !data.tenant_id) {
+                    employees.push({ id: doc.id, ...data });
+                }
+            } else {
+                employees.push({ id: doc.id, ...data });
+            }
+        });
+
+        res.json({ success: true, data: employees });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -80,15 +109,21 @@ exports.deleteEmployee = async (req, res) => {
         }
 
         let query = db.collection(USERS).where("empID", "==", empID);
-        if (!isGlobalTenant(req)) {
-            query = query.where("tenant_id", "==", req.tenantId);
-        }
         const snapshot = await query.get();
 
         if (snapshot.empty)
             return res.status(404).json({ message: "Employee not found" });
 
-        snapshot.forEach(doc => doc.ref.delete());
+        const doc = snapshot.docs[0];
+        const employeeData = doc.data();
+
+        if (!isGlobalTenant(req)) {
+            if (employeeData.tenant_id && employeeData.tenant_id !== req.tenantId) {
+                return res.status(403).json({ message: "Access denied" });
+            }
+        }
+
+        await doc.ref.delete();
 
         res.json({ message: "Employee Deleted Successfully" });
 
@@ -114,9 +149,6 @@ exports.updateEmployee = async (req, res) => {
         }
 
         let query = db.collection(USERS).where("empID", "==", empID);
-        if (!isGlobalTenant(req)) {
-            query = query.where("tenant_id", "==", req.tenantId);
-        }
         const snapshot = await query.get();
 
         if (snapshot.empty)
@@ -133,7 +165,20 @@ exports.updateEmployee = async (req, res) => {
             return res.status(403).json({ message: "Access denied" });
         }
 
-        await doc.ref.update(updates);
+        // Check if employee belongs to another company
+        if (req.user.role === "admin" && !isGlobalTenant(req)) {
+            if (employeeData.tenant_id && employeeData.tenant_id !== req.tenantId) {
+                return res.status(403).json({ message: "Access denied: Employee belongs to a different company" });
+            }
+        }
+
+        const finalUpdates = { ...updates };
+        // Dynamically assign tenant_id to the admin's tenant if they are approving a tenantless employee
+        if (req.user.role === "admin" && !isGlobalTenant(req) && !employeeData.tenant_id) {
+            finalUpdates.tenant_id = req.tenantId;
+        }
+
+        await doc.ref.update(finalUpdates);
 
         res.json({ message: "Employee Updated Successfully" });
 

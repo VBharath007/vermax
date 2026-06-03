@@ -1,34 +1,37 @@
-const { db, storage } = require("../../config/firebase");
+const { db } = require("../../config/firebase");
 const dayjs = require("dayjs");
+const cloudinary = require("cloudinary").v2;
+
+// Ensure Cloudinary is configured
+cloudinary.config({
+    cloudinary_url: process.env.CLOUDINARY_URL
+});
 
 exports.uploadImage = async (projectNo, file, metadata) => {
     try {
-
         if (!file) {
             throw new Error("No image file provided");
         }
 
-        const bucket = storage.bucket();
-
         const timestamp = Date.now();
         const extension = file.originalname.split(".").pop();
-
         const imageId = `img_${timestamp}`;
+        const folder = `projects/${projectNo}/images`;
 
-        const storagePath = `projects/${projectNo}/images/${imageId}.${extension}`;
-
-        const fileUpload = bucket.file(storagePath);
-
-        await fileUpload.save(file.buffer, {
-            metadata: {
-                contentType: file.mimetype
-            }
+        // Upload to Cloudinary
+        const uploadResult = await new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+                { folder, resource_type: "auto" },
+                (error, result) => {
+                    if (error) reject(error);
+                    else resolve(result);
+                }
+            );
+            stream.end(file.buffer);
         });
 
-        // make file public
-        await fileUpload.makePublic();
-
-        const imageUrl = `https://storage.googleapis.com/${bucket.name}/${storagePath}`;
+        const imageUrl = uploadResult.secure_url;
+        const storagePath = `cloudinary:${uploadResult.public_id}`;
 
         const imageRecord = {
             projectNo,
@@ -123,11 +126,14 @@ exports.deleteImage = async (imageId) => {
         }
 
         const imageData = doc.data();
-        const bucket = storage.bucket();
 
-        if (imageData.storagePath) {
-            const file = bucket.file(imageData.storagePath);
-            await file.delete();
+        if (imageData.storagePath && imageData.storagePath.startsWith("cloudinary:")) {
+            const publicId = imageData.storagePath.replace("cloudinary:", "");
+            try {
+                await cloudinary.uploader.destroy(publicId);
+            } catch (cloudinaryErr) {
+                console.error("Failed to delete image from Cloudinary:", cloudinaryErr.message);
+            }
         }
 
         await docRef.delete();

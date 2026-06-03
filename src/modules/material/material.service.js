@@ -52,19 +52,22 @@ initializeMaterials();
 // ─── Internal Helpers ─────────────────────────────────────────────────────────
 
 async function _createMaterialExpense(receiptId, receivedData, paidAmount) {
-    // ✅ FIX 3: always store ISO date → Flutter formatDate() works correctly
     const isoNow = new Date().toISOString();
 
     const expenseData = {
         projectNo: receivedData.projectNo,
         amount: paidAmount,
         particular: `Material Purchase: ${receivedData.materialName}`,
-        remark: receivedData.dealerName ? `Material Purchase: ${receivedData.materialName} (Dealer: ${receivedData.dealerName})` : `Material Purchase: ${receivedData.materialName}`,
+        remark: receivedData.dealerName
+            ? `Material Purchase: ${receivedData.materialName} (Dealer: ${receivedData.dealerName})`
+            : `Material Purchase: ${receivedData.materialName}`,
         type: "materialPayment",
         materialId: receivedData.materialId,
         receiptId,
         date: isoNow,
         createdAt: isoNow,
+        // ✅ FIX: Save tenant_id so tenant-filtered queries can find this expense
+        tenant_id: receivedData.tenant_id || null,
     };
 
     const snap = await siteExpensesCollection

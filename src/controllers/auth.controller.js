@@ -45,6 +45,54 @@ exports.register = async (req, res) => {
     }
 };
 
+exports.registerEmployee = async (req, res) => {
+    try {
+        const { email, empID, name, phone, labourType, wagesType, salaryPerDay } = req.body;
+        if (!email || !empID || !name) {
+            return res.status(400).json({ message: "Name, Email, and Employee ID are required" });
+        }
+
+        const adminSnap = await db.collection('admins').where('email', '==', email).get();
+        const userSnap = await db.collection('users').where('email', '==', email).get();
+        const empIDSnap = await db.collection('users').where('empID', '==', empID).get();
+        
+        if (!adminSnap.empty || !userSnap.empty) {
+            return res.status(400).json({ message: "User with this email already exists" });
+        }
+
+        if (!empIDSnap.empty) {
+            return res.status(400).json({ message: "Employee ID already registered" });
+        }
+
+        const hashedPassword = await bcrypt.hash(empID, 10);
+        
+        const newEmployee = {
+            email,
+            empID,
+            name,
+            phone: phone || '',
+            labourType: labourType || 'Labour',
+            wagesType: wagesType || 'Daily',
+            salaryPerDay: salaryPerDay ? Number(salaryPerDay) : 0,
+            password: hashedPassword,
+            role: 'employee',
+            approved: false,
+            firstLogin: true,
+            createdAt: new Date()
+        };
+
+        const docRef = await db.collection('users').add(newEmployee);
+
+        res.status(201).json({
+            message: "Employee registration successful.",
+            userId: docRef.id
+        });
+    } catch (error) {
+        console.error('[registerEmployee]', error.message);
+        res.status(500).json({ message: error.message });
+    }
+};
+
 exports.login = async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -82,27 +130,25 @@ exports.login = async (req, res) => {
         }
 
         // ── Step 3: Password verification ──────────────────────
-        if (userDoc.role === 'employee') {
-            // Employee: password = empID (plain text)
-            if (userDoc.empID !== password) {
-                return res.status(401).json({ message: "Invalid password" });
-            }
+        let passwordMatch = false;
+        if (userDoc.password && userDoc.password.startsWith('$2')) {
+            // Hashed password (bcrypt) — all new employees and admins
+            passwordMatch = await bcrypt.compare(password, userDoc.password);
         } else {
-            // Admin: support both hashed (bcrypt) AND plain-text passwords
-            const isHashed = userDoc.password?.startsWith('$2');
-            let match = false;
-            if (isHashed) {
-                match = await bcrypt.compare(password, userDoc.password);
-            } else {
-                // Plain-text comparison (default admin before hashing)
-                match = (password === userDoc.password);
-            }
-            if (!match) return res.status(401).json({ message: "Invalid password" });
+            // Legacy plain-text fallback
+            passwordMatch = (password === userDoc.password) || (userDoc.role === 'employee' && password === userDoc.empID);
+        }
+        if (!passwordMatch) {
+            return res.status(401).json({ message: "Invalid password" });
         }
 
         // ── Step 3.5: Check Pending Approval Status ────────────────
         if (userDoc.status === 'pending') {
             return res.status(403).json({ message: "Account pending Super Admin approval. Please wait." });
+        }
+
+        if (userDoc.role === 'employee' && userDoc.approved !== true) {
+            return res.status(403).json({ message: "Account pending Admin approval. Please wait." });
         }
 
         // ── Step 4: Generate JWT ────────────────────────────────
@@ -348,6 +394,29 @@ exports.testFCM = async (req, res) => {
         });
     } catch (error) {
         console.error('[testFCM]', error.message);
+        res.status(500).json({ message: error.message });
+    }
+};
+
+exports.getNotifications = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        if (!userId) return res.status(400).json({ message: "User ID not found in token" });
+
+        const snap = await db.collection('users').doc(userId).collection('notifications')
+            .orderBy('createdAt', 'desc')
+            .limit(50)
+            .get();
+
+        const notifications = snap.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt ? doc.data().createdAt.toDate().toISOString() : null
+        }));
+
+        res.status(200).json({ success: true, data: notifications });
+    } catch (error) {
+        console.error('[getNotifications]', error.message);
         res.status(500).json({ message: error.message });
     }
 };

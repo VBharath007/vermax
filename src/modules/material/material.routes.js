@@ -15,8 +15,8 @@ const {
 const isAdmin = [verifyToken, authorize(["admin"]), tenantContext];
 
 // --- Material Master --- //
-// router.post("/", isAdmin, materialController.createMaterial);
-// router.get("/", isAdmin, materialController.getMaterials);
+router.post("/", isAdmin, materialController.createMaterial);
+router.get("/", isAdmin, materialController.getMaterials);
 
 // --- Material Received --- //
 router.post("/received", isAdmin, validateRecordMaterialReceived, materialController.recordMaterialReceived);

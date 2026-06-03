@@ -3,19 +3,23 @@ const dotenv = require("dotenv");
 const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
+const path = require("path");
 
 dotenv.config();
 
 const app = express();
-
 
 app.use(express.json());
 app.use(cors({
     origin: process.env.FRONTEND_URL || '*',   // Set FRONTEND_URL in Railway to lock down CORS
     credentials: true
 }));
-app.use(helmet());
+app.use(helmet({
+    crossOriginResourcePolicy: false, // Let images be fetched on other ports/domains
+}));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+
+app.use("/uploads", express.static(path.join(__dirname, "../public/uploads")));
 
 // Routes
 app.use("/api/super/tenants", require("./modules/tenant/tenant.routes"));
@@ -43,6 +47,9 @@ app.use("/api/tasks", require("./modules/task/task.routes"));
 app.use("/api/lists", require("./modules/list/list.routes"));
 app.use("/api/extra-works", require("./modules/extraWork/extraWork.routes"));
 app.use("/api/additional-works", require("./modules/additionalWork/additionalWork.routes"));
+app.use("/api/safety", require("./modules/safety/safety.routes"));
+app.use("/api/site-management", require("./modules/site-management/siteManagement.routes"));
+app.use("/api/permissions", require("./modules/permission/permission.routes"));
 
 // Error Middleware
 app.use(require("./middleware/error.middleware").errorHandler);

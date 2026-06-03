@@ -3,11 +3,13 @@ const controller = require("../controllers/auth.controller");
 const { verifyToken } = require("../middleware/auth.middleware");
 
 router.post("/register", controller.register);
+router.post("/register-employee", controller.registerEmployee);
 router.post("/login", controller.login);
 router.post("/mfa", controller.verifyMFA);
 router.get("/me", verifyToken, controller.getMe);
 router.get("/dashboard", verifyToken, controller.dashboard);
 router.post("/fcm-token", verifyToken, controller.updateFCMToken);
+router.get("/notifications", verifyToken, controller.getNotifications);
 router.post("/test-fcm", controller.testFCM);
 router.get("/test-fcm", controller.testFCM);
 

@@ -27,6 +27,9 @@ exports.saveTask = async (taskData) => {
         priority: taskData.priority || 'Medium',
         status: taskData.status || 'Pending',
         type: taskData.type || taskData.section || 'Daily', // Daily, Weekly, Monthly
+        assignedRole: taskData.assignedRole || '',
+        assignedTo: taskData.assignedTo || '',
+        assignedEmpID: taskData.assignedEmpID || '',
         createdAt: now,
         updatedAt: now
     };
@@ -43,6 +46,42 @@ exports.saveTask = async (taskData) => {
 
     const docRef = await db.collection(COLLECTION).add(taskObject);
     const snap = await docRef.get();
+
+    // Trigger FCM Notification if assigned to a specific Employee ID
+    if (taskData.assignedEmpID) {
+        try {
+            // Find user by empID
+            const userQuery = await db.collection('users').where('empID', '==', taskData.assignedEmpID).get();
+            if (!userQuery.empty) {
+                const userDoc = userQuery.docs[0].data();
+                if (userDoc.fcmToken) {
+                    const message = {
+                        data: {
+                            type: 'new_task',
+                            taskId: docRef.id,
+                            title: 'New Task Assigned',
+                            body: `You have been assigned a new ${taskObject.type} task: ${taskObject.taskName}`,
+                        },
+                        token: userDoc.fcmToken,
+                    };
+                    await admin.messaging().send(message);
+                    console.log(`[FCM] Notification sent to ${taskData.assignedEmpID} for task ${docRef.id}`);
+
+                    // Save to user's notifications subcollection
+                    await db.collection('users').doc(userQuery.docs[0].id).collection('notifications').add({
+                        title: 'New Task Assigned',
+                        body: `You have been assigned a new ${taskObject.type} task: ${taskObject.taskName}`,
+                        taskId: docRef.id,
+                        isRead: false,
+                        createdAt: admin.firestore.FieldValue.serverTimestamp()
+                    });
+                }
+            }
+        } catch (fcmError) {
+            console.error('[FCM] Error sending notification:', fcmError);
+        }
+    }
+
     return formatDoc(snap);
 };
 

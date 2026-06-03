@@ -4,6 +4,16 @@ const { verifyToken } = require("../middleware/auth.middleware");
 const { authorize } = require("../middleware/role.middleware");
 const { tenantContext, featureGuard } = require("../middleware/tenant.middleware");
 
+// Get all employees (Admin only)
+router.get(
+    "/",
+    verifyToken,
+    authorize(["admin"]),
+    tenantContext,
+    featureGuard("employee_management"),
+    controller.getAllEmployees
+);
+
 // Create employee (Admin only)
 router.post(
     "/add",

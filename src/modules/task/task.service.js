@@ -1,4 +1,4 @@
-const { db } = require("../../config/firebase");
+const { db, admin } = require("../../config/firebase");
 
 const COLLECTION = "tasks";
 const tasksCol = () => db.collection(COLLECTION);
@@ -57,6 +57,8 @@ const createTask = async (data, tenant_id) => {
     listId: data.listId || "default",
     listName: data.listName || "Reminders",
     flagged: data.flagged ?? false,
+    assignedTo: data.assignedTo || null,
+    assignedEmpID: data.assignedEmpID || null,
     completed: false,
     completedAt: null,
     createdAt: now,
@@ -64,6 +66,45 @@ const createTask = async (data, tenant_id) => {
     tenant_id,
   };
   const ref = await tasksCol().add(payload);
+
+  // Trigger Notification if assigned to a specific Employee ID
+  if (data.assignedEmpID) {
+    try {
+      // Find user by empID
+      const userQuery = await db.collection("users").where("empID", "==", data.assignedEmpID).get();
+      if (!userQuery.empty) {
+        const userDoc = userQuery.docs[0].data();
+        const userId = userQuery.docs[0].id;
+        
+        // Save to user's notifications subcollection
+        await db.collection("users").doc(userId).collection("notifications").add({
+          title: "New Task Assigned",
+          body: `You have been assigned a new task: ${data.notes || data.title || ""}`,
+          taskId: ref.id,
+          isRead: false,
+          createdAt: new Date()
+        });
+        console.log(`[Notification] Saved notification to user ${userId} for task ${ref.id}`);
+
+        if (userDoc.fcmToken) {
+          const message = {
+            data: {
+              type: "new_task",
+              taskId: ref.id,
+              title: "New Task Assigned",
+              body: `You have been assigned a new task: ${data.notes || data.title || ""}`,
+            },
+            token: userDoc.fcmToken,
+          };
+          await admin.messaging().send(message);
+          console.log(`[FCM] Notification sent to ${data.assignedEmpID}`);
+        }
+      }
+    } catch (fcmError) {
+      console.error("[FCM/Notification] Error sending/saving notification:", fcmError);
+    }
+  }
+
   return { id: ref.id, ...payload };
 };
 

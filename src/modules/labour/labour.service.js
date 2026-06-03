@@ -262,6 +262,8 @@ async function _syncLabourPaymentToSiteExpense(paymentId, payment) {
         date:              rawDate,
         fromDate:          payment.fromDate || null,
         toDate:            payment.toDate   || null,
+        weeklyAttendance:  payment.weeklyAttendance || null,
+        wageCalculation:   payment.wageCalculation || null,
         paymentId,                                        // back-reference
         createdAt:         payment.createdAt || new Date().toISOString(),
         updatedAt:         payment.updatedAt || null,
@@ -331,6 +333,8 @@ exports.recordLabourPayment = async (labourId, projectNo, data, tenant_id) => {
         fromDate: fromDate || null,
         toDate: toDate || null,
         remark,
+        weeklyAttendance: data.weeklyAttendance || null,
+        wageCalculation: data.wageCalculation || null,
         date: new Date().toISOString(),
         createdAt: now(),
         tenant_id

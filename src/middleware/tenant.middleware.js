@@ -11,20 +11,8 @@ exports.tenantContext = (req, res, next) => {
         return res.status(401).json({ message: "Authentication required before checking tenant context." });
     }
 
-    // Backward Compatibility for existing "admin" role during development
-    // Always normalize to "GLOBAL" when tenant_id is falsy — prevents undefined
-    // from reaching Firestore .where() queries and causing a 500 error.
-    if (req.user.role === "admin" || req.user.role === "super_admin") {
-        req.tenantId = req.user.tenant_id || "GLOBAL";
-        return next();
-    }
-
-    // Regular users must have a tenant_id
-    if (!req.user.tenant_id) {
-        return res.status(403).json({ message: "Access Denied: No tenant context found for this user." });
-    }
-
-    req.tenantId = req.user.tenant_id;
+    // Normalize tenant_id. Default to "GLOBAL" for backward compatibility and global users.
+    req.tenantId = req.user.tenant_id || "GLOBAL";
     next();
 };
 
