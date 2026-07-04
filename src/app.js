@@ -19,6 +19,18 @@ app.use(helmet({
 }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
+// Cache invalidation middleware for mutations (POST/PUT/DELETE)
+app.use((req, res, next) => {
+    if (req.method !== "GET") {
+        const cache = require("./utils/cache");
+        cache.invalidatePrefix("projects_");
+        cache.invalidatePrefix("wh_");
+        cache.invalidatePrefix("user_profile_");
+        cache.invalidatePrefix("approvals_");
+    }
+    next();
+});
+
 app.use("/uploads", express.static(path.join(__dirname, "../public/uploads")));
 
 // Routes
@@ -30,6 +42,7 @@ app.use("/api/employee", require("./routes/employee.routes"));
 app.use("/api/admin", require("./routes/admin.routes"));
 app.use("/api/addadmin", require("./routes/addadmin.routes"));
 app.use("/api/mould", require("./modules/mould/mould.routes"));
+app.use("/api/tenant", require("./routes/tenant.routes"));
 
 
 // New Modular Architecture Routes
@@ -50,6 +63,8 @@ app.use("/api/additional-works", require("./modules/additionalWork/additionalWor
 app.use("/api/safety", require("./modules/safety/safety.routes"));
 app.use("/api/site-management", require("./modules/site-management/siteManagement.routes"));
 app.use("/api/permissions", require("./modules/permission/permission.routes"));
+app.use("/api/print", require("./modules/print/print.routes"));
+app.use("/api/document-scan", require("./modules/document-scan/documentScan.routes"));
 
 // Error Middleware
 app.use(require("./middleware/error.middleware").errorHandler);

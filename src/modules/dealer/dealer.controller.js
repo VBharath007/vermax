@@ -107,6 +107,22 @@ exports.updateDealerPayment = async (req, res) => {
     }
 };
 
+// ─── 7b. Update dealer name/phone details ──────────────────────────────────
+// PUT /api/dealers/:phoneNumber/details
+// Body: { newName: "New Name", newPhoneNumber: "+91..." }
+exports.updateDealerDetails = async (req, res) => {
+    try {
+        const result = await dealerService.updateDealerDetails(
+            req.params.phoneNumber,
+            req.body,
+            req.tenantId
+        );
+        res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        res.status(400).json({ success: false, error: error.message });
+    }
+};
+
 // ─── 8. Delete dealer and all associated records ──────────────────────────────
 // DELETE /api/dealers/:phoneNumber
 exports.deleteDealer = async (req, res) => {

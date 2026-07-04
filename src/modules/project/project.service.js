@@ -198,6 +198,7 @@ exports.createProject = async (projectData) => {
             remark: "Initial advance on project creation",
             date: projectData.startDate || new Date().toISOString().split("T")[0],
             createdAt: new Date().toISOString(),
+            tenant_id: projectData.tenant_id || "GLOBAL",
         };
 
         const advanceRef = await advancesCollection.add(advanceData);
@@ -253,8 +254,8 @@ exports.updateProject = async (projectNo, updateData) => {
     delete updateData.createdAt;
 
     await docRef.update(updateData);
-    const updatedDoc = await docRef.get();
-    return updatedDoc.data();
+    // ✅ PERF: Don't re-read the doc after update — Flutter ignores this response
+    return { projectNo, updated: true };
 };
 
 exports.deleteProject = async (projectNo) => {

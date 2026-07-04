@@ -4,6 +4,19 @@ const COLLECTION = "tasks";
 const tasksCol = () => db.collection(COLLECTION);
 const taskRef = (id) => db.collection(COLLECTION).doc(id);
 
+// ── In-Memory Cache ───────────────────────────────────────────────────────────
+const memoryCache = {
+  incomplete: new Map(),
+  completed: new Map()
+};
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+const clearTenantCache = (tenant_id) => {
+  const tId = tenant_id || 'GLOBAL';
+  memoryCache.incomplete.delete(tId);
+  memoryCache.completed.delete(tId);
+};
+
 // ── Date helpers (DD-MM-YYYY format throughout) ───────────────────────────────
 const todayFormatted = () => {
   const d = new Date();
@@ -67,42 +80,47 @@ const createTask = async (data, tenant_id) => {
   };
   const ref = await tasksCol().add(payload);
 
+  clearTenantCache(tenant_id);
+
   // Trigger Notification if assigned to a specific Employee ID
   if (data.assignedEmpID) {
-    try {
-      // Find user by empID
-      const userQuery = await db.collection("users").where("empID", "==", data.assignedEmpID).get();
-      if (!userQuery.empty) {
-        const userDoc = userQuery.docs[0].data();
-        const userId = userQuery.docs[0].id;
-        
-        // Save to user's notifications subcollection
-        await db.collection("users").doc(userId).collection("notifications").add({
-          title: "New Task Assigned",
-          body: `You have been assigned a new task: ${data.notes || data.title || ""}`,
-          taskId: ref.id,
-          isRead: false,
-          createdAt: new Date()
-        });
-        console.log(`[Notification] Saved notification to user ${userId} for task ${ref.id}`);
+    (async () => {
+      try {
+        // Find user by empID
+        const userQuery = await db.collection("users").where("empID", "==", data.assignedEmpID).get();
+        if (!userQuery.empty) {
+          const userDoc = userQuery.docs[0].data();
+          const userId = userQuery.docs[0].id;
+          
+          // Save to user's notifications subcollection
+          await db.collection("users").doc(userId).collection("notifications").add({
+            title: "New Task Assigned",
+            body: `You have been assigned a new task: ${data.notes || data.title || ""}`,
+            taskId: ref.id,
+            isRead: false,
+            createdAt: new Date()
+          });
+          console.log(`[Notification] Saved notification to user ${userId} for task ${ref.id}`);
 
-        if (userDoc.fcmToken) {
-          const message = {
-            data: {
-              type: "new_task",
-              taskId: ref.id,
-              title: "New Task Assigned",
-              body: `You have been assigned a new task: ${data.notes || data.title || ""}`,
-            },
-            token: userDoc.fcmToken,
-          };
-          await admin.messaging().send(message);
-          console.log(`[FCM] Notification sent to ${data.assignedEmpID}`);
+          if (userDoc.fcmToken) {
+            const message = {
+              data: {
+                type: "new_task",
+                taskId: ref.id,
+                title: "New Task Assigned",
+                body: `You have been assigned a new task: ${data.notes || data.title || ""}`,
+              },
+              token: userDoc.fcmToken,
+            };
+            admin.messaging().send(message)
+              .then(() => console.log(`[FCM] Notification sent to ${data.assignedEmpID}`))
+              .catch(fcmErr => console.error("[FCM] Error sending FCM message:", fcmErr));
+          }
         }
+      } catch (fcmError) {
+        console.error("[FCM/Notification] Error sending/saving notification:", fcmError);
       }
-    } catch (fcmError) {
-      console.error("[FCM/Notification] Error sending/saving notification:", fcmError);
-    }
+    })();
   }
 
   return { id: ref.id, ...payload };
@@ -125,6 +143,7 @@ const updateTask = async (id, data, tenant_id) => {
 
   await taskRef(id).update(updates);
   const updated = await taskRef(id).get();
+  clearTenantCache(tenant_id);
   return { id: updated.id, ...updated.data() };
 };
 
@@ -133,6 +152,7 @@ const deleteTask = async (id, tenant_id) => {
   if (!snap.exists) throw new Error("Task not found");
   if (tenant_id && tenant_id !== 'GLOBAL' && snap.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
   await taskRef(id).delete();
+  clearTenantCache(tenant_id);
   return { deleted: true };
 };
 
@@ -155,17 +175,27 @@ const completeTask = async (id, completed, tenant_id) => {
     updatedAt: now,
   });
   const updatedSnap = await taskRef(id).get();
+  clearTenantCache(tenant_id);
   return { id: updatedSnap.id, ...updatedSnap.data() };
 };
 
 // ── Shared fetch ──────────────────────────────────────────────────────────────
 const fetchAllIncomplete = async (tenant_id) => {
+  const tId = tenant_id || 'GLOBAL';
+  const cached = memoryCache.incomplete.get(tId);
+  if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+      return cached.data;
+  }
+
   let query = tasksCol().where("completed", "==", false);
   if (tenant_id && tenant_id !== 'GLOBAL') {
       query = query.where("tenant_id", "==", tenant_id);
   }
   const snap = await query.get();
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const tasks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  memoryCache.incomplete.set(tId, { data: tasks, timestamp: Date.now() });
+  return tasks;
 };
 
 // ── Smart Lists ───────────────────────────────────────────────────────────────
@@ -215,6 +245,12 @@ const getFlagged = async (tenant_id) => {
 };
 
 const getCompleted = async (tenant_id) => {
+  const tId = tenant_id || 'GLOBAL';
+  const cached = memoryCache.completed.get(tId);
+  if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+      return cached.data;
+  }
+
   let query = tasksCol().where("completed", "==", true);
   if (tenant_id && tenant_id !== 'GLOBAL') {
       query = query.where("tenant_id", "==", tenant_id);
@@ -241,6 +277,8 @@ const getCompleted = async (tenant_id) => {
     if (!grouped[label]) grouped[label] = [];
     grouped[label].push(task);
   }
+
+  memoryCache.completed.set(tId, { data: grouped, timestamp: Date.now() });
   return grouped;
 };
 
@@ -252,26 +290,22 @@ const getByList = async (listId, tenant_id) => {
 const getSmartCounts = async (tenant_id) => {
   const today = todayFormatted(); // "09-04-2026"
 
-  let incQuery = tasksCol().where("completed", "==", false);
-  let compQuery = tasksCol().where("completed", "==", true);
-  if (tenant_id && tenant_id !== 'GLOBAL') {
-      incQuery = incQuery.where("tenant_id", "==", tenant_id);
-      compQuery = compQuery.where("tenant_id", "==", tenant_id);
-  }
-
-  const [incompleteSnap, completedSnap] = await Promise.all([
-    incQuery.get(),
-    compQuery.count().get(),
+  const [incomplete, completedGrouped] = await Promise.all([
+    fetchAllIncomplete(tenant_id),
+    getCompleted(tenant_id),
   ]);
 
-  const incomplete = incompleteSnap.docs.map((d) => d.data());
+  let completedCount = 0;
+  for (const group in completedGrouped) {
+      completedCount += completedGrouped[group].length;
+  }
 
   return {
     today:     incomplete.filter((t) => t.dueDate === today).length,
     scheduled: incomplete.filter((t) => t.hasDueDate).length,
     all:       incomplete.length,
     flagged:   incomplete.filter((t) => t.flagged).length,
-    completed: completedSnap.data().count,
+    completed: completedCount,
   };
 };
 

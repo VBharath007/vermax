@@ -1,41 +1,43 @@
-    const express = require("express");
+const express = require("express");
     const router = express.Router();
     const workController = require("./work.controller");
-    const { verifyToken } = require("../../middleware/auth.middleware");
+    const { verifyToken, isSiteManager } = require("../../middleware/auth.middleware");
     const { authorize } = require("../../middleware/role.middleware");
-const { tenantContext } = require("../../middleware/tenant.middleware");
+    const { tenantContext } = require("../../middleware/tenant.middleware");
 
     const isAdmin = [verifyToken, authorize(["admin"]), tenantContext];
+    const isManager = [verifyToken, isSiteManager, tenantContext];
 
     // IMPORTANT: specific paths MUST come before /:workId to avoid route conflict
-    router.get("/project/:projectNo/date/:date", isAdmin, workController.getWorkByDate);
-    router.get("/project/:projectNo/week", isAdmin, workController.getWorksByWeek);
-    router.get("/project/:projectNo/labour", isAdmin, workController.getLabourByProject);
-    router.get("/project/:projectNo/:workId", isAdmin, workController.getWorkById);
-    router.get("/project/:projectNo", isAdmin, workController.getWorks);
-    router.get("/master/:labourId/works", isAdmin, workController.getWorksByLabour);
+    router.get("/project/:projectNo/date/:date", isManager, workController.getWorkByDate);
+    router.get("/project/:projectNo/week", isManager, workController.getWorksByWeek);
+    router.get("/project/:projectNo/labour", isManager, workController.getLabourByProject);
+    router.get("/project/:projectNo/:workId", isManager, workController.getWorkById);
+    router.get("/project/:projectNo", isManager, workController.getWorks);
+    router.get("/master/:labourId/works", isManager, workController.getWorksByLabour);
 
     // ── Reverse lookup: all works a labour was assigned to ───────────────────────
     // GET /api/works/labour/:labourId
 
 
     // ── Hierarchical Labour Assignment ──────────────────────────────────────────
-    router.post("/project/:projectNo/:workId/master", isAdmin, workController.assignLabourToWork);
+    router.post("/project/:projectNo/:workId/master", isManager, workController.assignLabourToWork);
 
     // ── Sub-Labour CRUD ──────────────────────────────────────────────────────────
     // POST   /api/works/project/:projectNo/:workId/:labourId/sublabour        → add / merge counts
     // PUT    /api/works/project/:projectNo/:workId/:labourId/sublabour/:type  → edit one type count
     // DELETE /api/works/project/:projectNo/:workId/:labourId/sublabour/:type  → delete one type entry
-    router.post("/project/:projectNo/:workId/:labourId/sublabour", isAdmin, workController.updateSubLabourForWork);
-    router.put("/project/:projectNo/:workId/:labourId/sublabour/:type", isAdmin, workController.editSubLabourCount);
-    router.delete("/project/:projectNo/:workId/:labourId/sublabour/:type", isAdmin, workController.deleteSubLabourType);
+    // All these operations are used by supervisors/managers at site:
+    router.post("/project/:projectNo/:workId/:labourId/sublabour", isManager, workController.updateSubLabourForWork);
+    router.put("/project/:projectNo/:workId/:labourId/sublabour/:type", isManager, workController.editSubLabourCount);
+    router.delete("/project/:projectNo/:workId/:labourId/sublabour/:type", isManager, workController.deleteSubLabourType);
 
     // ── Standard Work CRUD ──────────────────────────────────────────────────────
-    router.post("/", isAdmin, workController.createWork);
-    router.get("/", isAdmin, workController.getWorks);
-    router.get("/:workId", isAdmin, workController.getWorkById);
-    router.put("/:workId", isAdmin, workController.updateWork);
-    router.delete("/:workId", isAdmin, workController.deleteWork);
+    router.post("/", isManager, workController.createWork);
+    router.get("/", isManager, workController.getWorks);
+    router.get("/:workId", isManager, workController.getWorkById);
+    router.put("/:workId", isManager, workController.updateWork);
+    router.delete("/:workId", isAdmin, workController.deleteWork); // delete remains admin-only
 
     router.put("/:projectNo/:workId", verifyToken, workController.updateWorkDate);
 

@@ -91,7 +91,7 @@ const buildLabourDetails = async (storedLabourDetails, preloadedMasters, preload
  *     }
  *   }
  */
-const migrateLegacyLabourData = async (workData) => {
+const migrateLegacyLabourData = async (workData, preloadedMasters = null) => {
     // Check if migration is needed
     const hasLegacyData = workData.labourName || workData.labourEntries || workData.labour;
     const hasModernData = workData.labourDetails && Object.keys(workData.labourDetails).length > 0;
@@ -122,7 +122,15 @@ const migrateLegacyLabourData = async (workData) => {
     // Try to find the labour in master registry by name
     let headLabourId = `legacy_${labourName.toLowerCase().replace(/\s+/g, '_')}`;
     try {
-        const master = await labourService.getLabourMasterByName(labourName);
+        let master = null;
+        if (preloadedMasters) {
+            master = preloadedMasters.find(m => m.name.toUpperCase() === labourName.toUpperCase());
+        }
+        
+        if (!master) {
+            master = await labourService.getLabourMasterByName(labourName);
+        }
+
         if (master && master.id) {
             headLabourId = master.id;
         }
@@ -210,37 +218,14 @@ exports.createWork = async (workData, tenant_id) => {
         tenant_id
     };
 
-    let query = worksCollection
-        .where("projectNo", "==", projectNo)
-        .where("work", "==", name);
-    if (tenant_id && tenant_id !== 'GLOBAL') {
-        query = query.where("tenant_id", "==", tenant_id);
-    }
-    const existingSnapshot = await query.limit(1).get();
-
-    if (!existingSnapshot.empty) {
-        const existingDoc = existingSnapshot.docs[0];
-        const updatePayload = { ...payload };
-        delete updatePayload.createdAt;
-        if (existingDoc.data().labourDetails !== undefined) {
-            delete updatePayload.labourDetails;
-        }
-        updatePayload.updatedAt = now();
-
-        await existingDoc.ref.update(updatePayload);
-        const updated = await existingDoc.ref.get();
-        const result = { workId: updated.id, ...updated.data() };
-        delete result.labourDetails;  // ⚠️ REMOVE FROM RESPONSE
-        return result;
-    }
+    // ALWAYS CREATE NEW - Auto-upsert logic has been removed as per user request.
 
     const docRef = await worksCollection.add(payload);
     
     // If headLabourId was provided in workData, assign it immediately
     if (workData.headLabourId) {
-        await exports.assignLabourToWork(projectNo, docRef.id, workData.headLabourId, workData.subLabourDetails);
-        const finalDoc = await worksCollection.doc(docRef.id).get();
-        const result = { workId: docRef.id, ...finalDoc.data() };
+        const finalData = await exports.assignLabourToWork(projectNo, docRef.id, workData.headLabourId, workData.subLabourDetails, tenant_id);
+        const result = { ...finalData };
         delete result.labourDetails;
         return result;
     }
@@ -303,8 +288,14 @@ exports.assignLabourToWork = async (projectNo, workId, headLabourId, subLabourDe
         updatedAt: now()
     });
 
-    const updated = await workRef.get();
-    const finalData = { workId: updated.id, ...updated.data() };
+    // 🚀 OPTIMIZATION: Avoid second DB read by merging updates manually
+    const updatedData = {
+        ...docData,
+        labourDetails: map,
+        updatedAt: now()
+    };
+    
+    const finalData = { workId, ...updatedData };
     finalData.labourDetails = await buildLabourDetails(finalData.labourDetails);
 
     return finalData;
@@ -437,8 +428,8 @@ exports.deleteSubLabourType = async (projectNo, workId, labourId, type, tenant_i
         updatedAt: now()
     });
 
-    const updated = await workRef.get();
-    const finalData = { workId: updated.id, ...updated.data() };
+    const updatedData = { ...docData, labourDetails: map, updatedAt: now() };
+    const finalData = { workId, ...updatedData };
     finalData.labourDetails = await buildLabourDetails(finalData.labourDetails);
 
     return finalData;
@@ -468,7 +459,7 @@ exports.getWorks = async (projectNo, tenant_id) => {
 
     // Migrate legacy data, enrich, and clean
     for (let i = 0; i < works.length; i++) {
-        works[i] = await migrateLegacyLabourData(works[i]); // ⚠️ MIGRATE FIRST
+        works[i] = await migrateLegacyLabourData(works[i], masters); // ⚠️ MIGRATE FIRST
         works[i].labourDetails = await buildLabourDetails(works[i].labourDetails, masters, subTypes);
         works[i] = cleanLegacyLabourFields(works[i]); // ⚠️ CLEAN LEGACY
     }
@@ -648,7 +639,7 @@ exports.getWorkByDate = async (projectNo, date, tenant_id) => {
 
     // Migrate, enrich, and clean
     for (let i = 0; i < works.length; i++) {
-        works[i] = await migrateLegacyLabourData(works[i]); // ⚠️ MIGRATE
+        works[i] = await migrateLegacyLabourData(works[i], masters); // ⚠️ MIGRATE
         works[i].labourDetails = await buildLabourDetails(works[i].labourDetails, masters, subTypes);
         works[i] = cleanLegacyLabourFields(works[i]); // ⚠️ CLEAN
     }
@@ -707,7 +698,7 @@ exports.getWorksByWeek = async (projectNo, fromDate, toDate, tenant_id) => {
 
     // Migrate, enrich, and clean
     for (let i = 0; i < works.length; i++) {
-        works[i] = await migrateLegacyLabourData(works[i]); // ⚠️ MIGRATE
+        works[i] = await migrateLegacyLabourData(works[i], masters); // ⚠️ MIGRATE
         works[i].labourDetails = await buildLabourDetails(works[i].labourDetails, masters, subTypes);
         works[i] = cleanLegacyLabourFields(works[i]); // ⚠️ CLEAN
     }
@@ -782,7 +773,7 @@ exports.getWorksByLabour = async (labourId, tenant_id) => {
 
     // Enrich and Migrate each work entry to ensure consistent format
     for (let i = 0; i < works.length; i++) {
-        works[i] = await migrateLegacyLabourData(works[i]);
+        works[i] = await migrateLegacyLabourData(works[i], masters);
         works[i].labourDetails = await buildLabourDetails(works[i].labourDetails, masters, subTypes);
         works[i] = cleanLegacyLabourFields(works[i]);
     }

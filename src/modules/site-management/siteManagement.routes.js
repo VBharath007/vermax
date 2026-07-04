@@ -1,11 +1,11 @@
 const express = require("express");
 const router = express.Router();
 const siteController = require("./siteManagement.controller");
-const { verifyToken, isAdmin } = require("../../middleware/auth.middleware");
+const { verifyToken, isSiteManager } = require("../../middleware/auth.middleware");
 const { tenantContext } = require("../../middleware/tenant.middleware");
 const upload = require("../../middleware/upload.middleware");
 
-const isAuth = [verifyToken, tenantContext, isAdmin];
+const isAuth = [verifyToken, tenantContext, isSiteManager];
 
 // ─── Materials Log ───
 router.get("/materials/stock", isAuth, siteController.getMaterialStocks);

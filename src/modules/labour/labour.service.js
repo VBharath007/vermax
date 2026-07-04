@@ -1,6 +1,8 @@
 const { db } = require("../../config/firebase");
 const { LABOUR_MASTERS, SUB_LABOUR_TYPES } = require("../../models/firestore.collections");
 const dayjs = require("dayjs");
+const { getNextReceiptNo } = require("../../utils/receiptCounter");
+const cache = require("../../utils/cache");
 
 /**
  * 🛡️ Safe tenant check.
@@ -69,6 +71,7 @@ exports.addLabourMaster = async (data, tenant_id) => {
         createdAt: now() 
     };
     const docRef = await labourMasterCollection.add(newLabour);
+    cache.invalidate(`labour_masters_${tenant_id || 'global'}`);
     return { id: docRef.id, ...newLabour };
 };
 
@@ -82,6 +85,7 @@ exports.updateLabourMaster = async (id, data, tenant_id) => {
     if (updateData.name) updateData.name = updateData.name.trim().toUpperCase();
     await docRef.update(updateData);
     const updated = await docRef.get();
+    cache.invalidate(`labour_masters_${tenant_id || 'global'}`);
     return { id, ...updated.data() };
 };
 
@@ -132,6 +136,7 @@ exports.deleteLabourMaster = async (id, tenant_id) => {
     batch.delete(docRef);
 
     await batch.commit();
+    cache.invalidate(`labour_masters_${tenant_id || 'global'}`);
 
     return { 
         message: "Head labour master and all associated records deleted successfully",
@@ -144,6 +149,10 @@ exports.deleteLabourMaster = async (id, tenant_id) => {
 
 exports.getLabourMasters = async (tenant_id) => {
     try {
+        const cacheKey = `labour_masters_${tenant_id || 'global'}`;
+        const cached = cache.get(cacheKey);
+        if (cached) return cached;
+
         let query = labourMasterCollection;
         if (!isGlobal(tenant_id)) {
             query = query.where("tenant_id", "==", tenant_id);
@@ -157,6 +166,7 @@ exports.getLabourMasters = async (tenant_id) => {
         });
         // Sort in memory to avoid Firestore requiring a composite index
         results.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        cache.set(cacheKey, results, 120_000); // 2 minutes
         return results;
     } catch (err) {
         console.error("❌ getLabourMasters Firestore ERROR:", err.message);
@@ -167,6 +177,14 @@ exports.getLabourMasters = async (tenant_id) => {
 
 
 exports.getLabourMasterById = async (id, tenant_id) => {
+    // Ultra-fast path: Check cache first
+    const cacheKey = `labour_masters_${tenant_id || 'global'}`;
+    const cached = cache.get(cacheKey);
+    if (cached) {
+        const found = cached.find(m => m.id === id);
+        if (found) return found;
+    }
+
     const doc = await labourMasterCollection.doc(id).get();
     if (!doc.exists) throw new Error("Head labour master not found");
     if (doc.data().tenant_id !== tenant_id && !isGlobal(tenant_id)) throw new Error("Unauthorized");
@@ -176,6 +194,15 @@ exports.getLabourMasterById = async (id, tenant_id) => {
 
 exports.getLabourMasterByName = async (name, tenant_id) => {
     const normalized = name.trim().toUpperCase();
+
+    // Ultra-fast path: Check cache first
+    const cacheKey = `labour_masters_${tenant_id || 'global'}`;
+    const cached = cache.get(cacheKey);
+    if (cached) {
+        const found = cached.find(m => m.name === normalized);
+        if (found) return found;
+    }
+
     let query = labourMasterCollection.where("name", "==", normalized).limit(1);
     if (!isGlobal(tenant_id)) {
         query = query.where("tenant_id", "==", tenant_id);
@@ -198,15 +225,21 @@ exports.addOtherSubLabourType = async (typeName) => {
     if (!doc.data().createdAt) await docRef.update({ createdAt: now() });
     const finalDoc = await docRef.get();
     const finalData = finalDoc.data();
+    cache.invalidate("sub_labour_types");
     return { id: docId, ...finalData, createdAt: formatDate(finalData.createdAt), updatedAt: formatDate(finalData.updatedAt) };
 };
 
 exports.getSubLabourTypes = async () => {
+    const cached = cache.get("sub_labour_types");
+    if (cached) return cached;
+
     const snap = await subLabourTypeCollection.orderBy("typeName", "asc").get();
-    return snap.docs.map(doc => {
+    const results = snap.docs.map(doc => {
         const data = doc.data();
         return { id: doc.id, ...data, createdAt: formatDate(data.createdAt), updatedAt: formatDate(data.updatedAt) };
     });
+    cache.set("sub_labour_types", results, 300_000); // 5 minutes
+    return results;
 };
 
 exports.updateSubLabourType = async (id, data) => {
@@ -219,6 +252,7 @@ exports.updateSubLabourType = async (id, data) => {
     if (data.typeName || data.labourType) updateData.typeName = (data.typeName || data.labourType).trim().toUpperCase();
     await docRef.update(updateData);
     const updated = await docRef.get();
+    cache.invalidate("sub_labour_types");
     return { id, ...updated.data() };
 };
 
@@ -229,6 +263,7 @@ exports.deleteSubLabourType = async (id) => {
     const existing = doc.data();
     if (existing.isDefault) throw new Error(`Cannot delete default sub-labour type '${existing.typeName}'`);
     await docRef.delete();
+    cache.invalidate("sub_labour_types");
     return { message: `Sub-labour type '${existing.typeName}' deleted successfully` };
 };
 
@@ -320,8 +355,10 @@ exports.recordLabourPayment = async (labourId, projectNo, data, tenant_id) => {
         bankTransactionId = txnRef.id;
     }
 
+    const receiptNo = await getNextReceiptNo(tenant_id, 'LBP');
     // ── Save master record in labourPayments ───────────────────────────────
     const payment = {
+        receiptNo,
         labourId,
         labourName: labourData.name,
         projectNo,

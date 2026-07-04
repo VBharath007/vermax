@@ -10,6 +10,23 @@ cloudinary.config({
 
 const siteCollection = db.collection(SITE_MANAGEMENT);
 
+// ── In-Memory Cache ───────────────────────────────────────────────────────────
+const memoryCache = {
+  material_stock: new Map(),
+  material_log: new Map(),
+  diary: new Map(),
+  punch_item: new Map(),
+  photo: new Map()
+};
+const CACHE_TTL = 5 * 60 * 1000;
+
+const clearCache = (type, tenant_id) => {
+  const tId = tenant_id || 'GLOBAL';
+  if (memoryCache[type]) {
+    memoryCache[type].delete(tId);
+  }
+};
+
 // Helper to filter query by type and tenant_id
 const getQuery = (type, tenant_id) => {
     let query = siteCollection.where("type", "==", type);
@@ -23,6 +40,10 @@ const getQuery = (type, tenant_id) => {
 
 // Get active stock levels (initialize if they don't exist)
 exports.getMaterialStocks = async (tenant_id) => {
+    const tId = tenant_id || 'GLOBAL';
+    const cached = memoryCache.material_stock.get(tId);
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) return cached.data;
+
     const snapshot = await getQuery("material_stock", tenant_id).get();
     let results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
@@ -45,9 +66,11 @@ exports.getMaterialStocks = async (tenant_id) => {
             const docRef = await siteCollection.add(doc);
             createdDefaults.push({ id: docRef.id, ...doc });
         }
+        memoryCache.material_stock.set(tId, { data: createdDefaults, timestamp: Date.now() });
         return createdDefaults;
     }
 
+    memoryCache.material_stock.set(tId, { data: results, timestamp: Date.now() });
     return results;
 };
 
@@ -59,6 +82,7 @@ exports.updateMaterialStock = async (id, stock, tenant_id) => {
 
     await docRef.update({ stock: Number(stock), updatedAt: new Date().toISOString() });
     const updated = await docRef.get();
+    clearCache("material_stock", tenant_id);
     return { id, ...updated.data() };
 };
 
@@ -79,13 +103,20 @@ exports.addMaterialLog = async (data, tenant_id) => {
     };
 
     const docRef = await siteCollection.add(newLog);
+    clearCache("material_log", tenant_id);
     return { id: docRef.id, ...newLog };
 };
 
 exports.getMaterialLogs = async (tenant_id) => {
+    const tId = tenant_id || 'GLOBAL';
+    const cached = memoryCache.material_log.get(tId);
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) return cached.data;
+
     const snapshot = await getQuery("material_log", tenant_id).get();
     const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    return results.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    const sorted = results.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    memoryCache.material_log.set(tId, { data: sorted, timestamp: Date.now() });
+    return sorted;
 };
 
 exports.deleteMaterialLog = async (id, tenant_id) => {
@@ -95,6 +126,7 @@ exports.deleteMaterialLog = async (id, tenant_id) => {
     if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     await docRef.delete();
+    clearCache("material_log", tenant_id);
     return { message: "Material log deleted successfully", id };
 };
 
@@ -116,13 +148,20 @@ exports.addDiaryEntry = async (data, tenant_id) => {
     };
 
     const docRef = await siteCollection.add(newEntry);
+    clearCache("diary", tenant_id);
     return { id: docRef.id, ...newEntry };
 };
 
 exports.getDiaryEntries = async (tenant_id) => {
+    const tId = tenant_id || 'GLOBAL';
+    const cached = memoryCache.diary.get(tId);
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) return cached.data;
+
     const snapshot = await getQuery("diary", tenant_id).get();
     const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    return results.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    const sorted = results.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    memoryCache.diary.set(tId, { data: sorted, timestamp: Date.now() });
+    return sorted;
 };
 
 exports.updateDiaryEntry = async (id, data, tenant_id) => {
@@ -141,6 +180,7 @@ exports.updateDiaryEntry = async (id, data, tenant_id) => {
 
     await docRef.update(updates);
     const updated = await docRef.get();
+    clearCache("diary", tenant_id);
     return { id, ...updated.data() };
 };
 
@@ -151,6 +191,7 @@ exports.deleteDiaryEntry = async (id, tenant_id) => {
     if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     await docRef.delete();
+    clearCache("diary", tenant_id);
     return { message: "Diary entry deleted successfully", id };
 };
 
@@ -172,13 +213,20 @@ exports.addPunchItem = async (data, tenant_id) => {
     };
 
     const docRef = await siteCollection.add(newSnag);
+    clearCache("punch_item", tenant_id);
     return { id: docRef.id, ...newSnag };
 };
 
 exports.getPunchItems = async (tenant_id) => {
+    const tId = tenant_id || 'GLOBAL';
+    const cached = memoryCache.punch_item.get(tId);
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) return cached.data;
+
     const snapshot = await getQuery("punch_item", tenant_id).get();
     const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    return results.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    const sorted = results.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    memoryCache.punch_item.set(tId, { data: sorted, timestamp: Date.now() });
+    return sorted;
 };
 
 exports.updatePunchItem = async (id, data, tenant_id) => {
@@ -197,6 +245,7 @@ exports.updatePunchItem = async (id, data, tenant_id) => {
 
     await docRef.update(updates);
     const updated = await docRef.get();
+    clearCache("punch_item", tenant_id);
     return { id, ...updated.data() };
 };
 
@@ -207,6 +256,7 @@ exports.deletePunchItem = async (id, tenant_id) => {
     if (tenant_id && tenant_id !== 'GLOBAL' && doc.data().tenant_id !== tenant_id) throw new Error("Unauthorized");
 
     await docRef.delete();
+    clearCache("punch_item", tenant_id);
     return { message: "Punch item deleted successfully", id };
 };
 
@@ -272,16 +322,23 @@ exports.uploadPhoto = async (file, title, tenant_id, baseUrl) => {
     };
 
     const docRef = await siteCollection.add(photoRecord);
+    clearCache("photo", tenant_id);
     return { id: docRef.id, ...photoRecord };
 };
 
 exports.getPhotos = async (tenant_id) => {
+    const tId = tenant_id || 'GLOBAL';
+    const cached = memoryCache.photo.get(tId);
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) return cached.data;
+
     const snapshot = await getQuery("photo", tenant_id).get();
     const results = snapshot.docs.map(doc => {
         const data = doc.data();
         return { id: doc.id, title: data.title, imageUrl: data.imageUrl, date: data.date, createdAt: data.createdAt };
     });
-    return results.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    const sorted = results.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    memoryCache.photo.set(tId, { data: sorted, timestamp: Date.now() });
+    return sorted;
 };
 
 exports.updatePhoto = async (id, title, tenant_id) => {
@@ -292,6 +349,7 @@ exports.updatePhoto = async (id, title, tenant_id) => {
 
     await docRef.update({ title: title.trim(), updatedAt: new Date().toISOString() });
     const updated = await docRef.get();
+    clearCache("photo", tenant_id);
     return { id, title: updated.data().title, imageUrl: updated.data().imageUrl, date: updated.data().date };
 };
 
@@ -334,5 +392,6 @@ exports.deletePhoto = async (id, tenant_id) => {
     }
 
     await docRef.delete();
+    clearCache("photo", tenant_id);
     return { message: "Photo deleted successfully", id };
 };

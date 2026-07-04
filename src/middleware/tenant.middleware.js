@@ -1,6 +1,25 @@
 const jwt = require("jsonwebtoken");
 const admin = require("firebase-admin");
 
+// ✅ FIX #7: In-memory tenant cache — avoids repeated Firestore reads on every protected route
+// Cache entries expire after 5 minutes (300,000 ms)
+const _tenantCache = new Map();
+const TENANT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function _getCachedTenant(tenantId) {
+    const entry = _tenantCache.get(tenantId);
+    if (!entry) return null;
+    if (Date.now() - entry.time > TENANT_CACHE_TTL_MS) {
+        _tenantCache.delete(tenantId); // expired — remove it
+        return null;
+    }
+    return entry.data;
+}
+
+function _setCachedTenant(tenantId, data) {
+    _tenantCache.set(tenantId, { data, time: Date.now() });
+}
+
 /**
  * Advanced Middleware: Extracts tenant context from the verified token.
  * Ensures the user belongs to a valid tenant or is a super admin.
@@ -40,16 +59,22 @@ exports.featureGuard = (featureKey) => {
                 return res.status(403).json({ message: "Access Denied: Missing tenant context." });
             }
 
-            // Fetch tenant's enabled features from Firestore (with caching recommended in production)
-            const db = admin.firestore();
-            const tenantDoc = await db.collection("tenants").doc(req.tenantId).get();
+            // ✅ FIX #7: Check in-memory cache first — skip Firestore read if recently fetched
+            let tenantData = _getCachedTenant(req.tenantId);
 
-            if (!tenantDoc.exists) {
-                return res.status(404).json({ message: "Tenant account not found or suspended." });
+            if (!tenantData) {
+                // Cache miss — fetch from Firestore and cache the result
+                const db = admin.firestore();
+                const tenantDoc = await db.collection("tenants").doc(req.tenantId).get();
+
+                if (!tenantDoc.exists) {
+                    return res.status(404).json({ message: "Tenant account not found or suspended." });
+                }
+
+                tenantData = tenantDoc.data();
+                _setCachedTenant(req.tenantId, tenantData); // cache for next 5 minutes
             }
 
-            const tenantData = tenantDoc.data();
-            
             if (tenantData.status !== "active") {
                 return res.status(403).json({ message: "Your company account is currently suspended or inactive." });
             }

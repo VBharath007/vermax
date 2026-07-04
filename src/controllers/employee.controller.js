@@ -60,6 +60,9 @@ exports.addEmployee = async (req, res) => {
 
         await db.collection(USERS).add(userPayload);
 
+        const cache = require("../utils/cache");
+        cache.invalidatePrefix("employees_");
+
         res.json({ message: "Employee Created Successfully" });
 
     } catch (err) {
@@ -73,6 +76,15 @@ exports.addEmployee = async (req, res) => {
 
 exports.getAllEmployees = async (req, res) => {
     try {
+        const cache = require("../utils/cache");
+        const tId = req.tenantId || 'GLOBAL';
+        const cacheKey = `employees_${tId}`;
+        const cachedData = cache.get(cacheKey);
+        
+        if (cachedData) {
+            return res.json({ success: true, data: cachedData });
+        }
+
         const snapshot = await db.collection(USERS).where("role", "==", "employee").get();
 
         const employees = [];
@@ -89,6 +101,7 @@ exports.getAllEmployees = async (req, res) => {
             }
         });
 
+        cache.set(cacheKey, employees, 5 * 60 * 1000); // 5 mins cache
         res.json({ success: true, data: employees });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -124,6 +137,9 @@ exports.deleteEmployee = async (req, res) => {
         }
 
         await doc.ref.delete();
+
+        const cache = require("../utils/cache");
+        cache.invalidatePrefix("employees_");
 
         res.json({ message: "Employee Deleted Successfully" });
 
@@ -179,6 +195,9 @@ exports.updateEmployee = async (req, res) => {
         }
 
         await doc.ref.update(finalUpdates);
+
+        const cache = require("../utils/cache");
+        cache.invalidatePrefix("employees_");
 
         res.json({ message: "Employee Updated Successfully" });
 

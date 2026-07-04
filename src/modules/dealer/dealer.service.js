@@ -1,5 +1,6 @@
 const { db } = require("../../config/firebase");
 const dayjs = require("dayjs");
+const { getNextReceiptNo } = require("../../utils/receiptCounter");
 
 const materialReceivedCollection = db.collection("materialReceived");
 const paymentsCollection = db.collection("dealerPayments");
@@ -459,10 +460,15 @@ exports.updateDealerPayment = async (phoneNumber, amountPaid, tenant_id) => {
     if (tenant_id && tenant_id !== 'GLOBAL') {
         query = query.where("tenant_id", "==", tenant_id);
     }
-    const snapshot = await query.get();
-
+    
+    // Fetch snapshot and get next receipt number concurrently
+    const [snapshot, receiptNo] = await Promise.all([
+        query.get(),
+        getNextReceiptNo(tenant_id, 'DEP')
+    ]);
     const paymentRef = paymentsCollection.doc();
     const paymentData = {
+        receiptNo,
         dealerContact: phoneNumber,
         amountPaid: Number(amountPaid),
         date: new Date().toISOString(),
@@ -702,7 +708,7 @@ exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method,
     const variations = getPhoneVariations(phoneNumber);
 
     // ─────────────────────────────────────────────
-    // 1. FETCH BILLS FIRST (IMPORTANT)
+    // 1. FETCH BILLS AND BANK CONCURRENTLY (OPTIMIZED)
     // ─────────────────────────────────────────────
     let query = materialReceivedCollection
         .where("dealerContact", "in", variations)
@@ -710,7 +716,14 @@ exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method,
     if (tenant_id && tenant_id !== 'GLOBAL') {
         query = query.where("tenant_id", "==", tenant_id);
     }
-    const snapshot = await query.get();
+    
+    // Fetch both in parallel to save 1 full network round trip (~1 second)
+    const [snapshot, bankDoc] = await Promise.all([
+        query.get(),
+        (paymentMethod === "bank" && bankId) 
+            ? banksCollection.doc(bankId).get() 
+            : Promise.resolve(null)
+    ]);
 
     let totalPending = 0;
     let dealerName = "";
@@ -724,7 +737,7 @@ exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method,
     }
 
     // ─────────────────────────────────────────────
-    // 2. VALIDATION FIRST (CRITICAL FIX)
+    // 2. VALIDATION FIRST
     // ─────────────────────────────────────────────
     if (totalPending <= 0) {
         throw new Error("All bills already fully paid");
@@ -744,9 +757,7 @@ exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method,
 
     if (paymentMethod === "bank") {
         if (!bankId) throw new Error("bankId is required for BANK payment");
-
-        const bankDoc = await banksCollection.doc(bankId).get();
-        if (!bankDoc.exists) throw new Error("Bank not found");
+        if (!bankDoc || !bankDoc.exists) throw new Error("Bank not found");
 
         bankData = bankDoc.data();
         currentBalance = Number(bankData.currentBalance || 0);
@@ -818,6 +829,24 @@ exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method,
 
     // Batch update
     const batch = db.batch();
+    
+    const receiptNo = await getNextReceiptNo(tenant_id, 'DEP');
+    const paymentDoc = {
+        receiptNo,
+        dealerContact: phoneNumber,
+        projectNo,
+        amountPaid: paymentAmount,
+        method: paymentMethod,
+        bankId: bankId || null,
+        bankName: bankData?.accountName || null,
+        bankTransactionId: bankTransactionId || null,
+        date: paymentDateISO,
+        type: "Payment",
+    };
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        paymentDoc.tenant_id = tenant_id;
+    }
+    batch.set(paymentsCollection.doc(), paymentDoc);
 
     for (const b of updatedBills) {
         batch.update(b.ref, {
@@ -825,18 +854,9 @@ exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method,
             dueAmount: (Number(b.data.totalAmount) || 0) - b.newPaid,
             updatedAt: paymentDateISO,
         });
-    }
-
-    await batch.commit();
-
-    // ─────────────────────────────────────────────
-    // 5. EXPENSE ENTRY (UNCHANGED)
-    // ─────────────────────────────────────────────
-    for (const b of updatedBills) {
-        try {
-            const appliedAmount = b.newPaid - (Number(b.data.paidAmount) || 0);
-            if (appliedAmount <= 0) continue;
-
+        
+        const appliedAmount = b.newPaid - (Number(b.data.paidAmount) || 0);
+        if (appliedAmount > 0) {
             const expenseDoc = {
                 projectNo: b.data.projectNo,
                 amount: appliedAmount,
@@ -856,31 +876,11 @@ exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method,
             if (tenant_id && tenant_id !== 'GLOBAL') {
                 expenseDoc.tenant_id = tenant_id;
             }
-
-            await siteExpensesCollection.add(expenseDoc);
-        } catch (err) {
-            console.error("Expense sync failed:", err.message);
+            batch.set(siteExpensesCollection.doc(), expenseDoc);
         }
     }
 
-    // ─────────────────────────────────────────────
-    // 6. STORE PAYMENT LOG
-    // ─────────────────────────────────────────────
-    const paymentDoc = {
-        dealerContact: phoneNumber,
-        projectNo,
-        amountPaid: paymentAmount,
-        method: paymentMethod,
-        bankId: bankId || null,
-        bankName: bankData?.accountName || null,
-        bankTransactionId: bankTransactionId || null,
-        date: paymentDateISO,
-        type: "Payment",
-    };
-    if (tenant_id && tenant_id !== 'GLOBAL') {
-        paymentDoc.tenant_id = tenant_id;
-    }
-    await paymentsCollection.add(paymentDoc);
+    await batch.commit();
 
     // ─────────────────────────────────────────────
     // 7. RESPONSE
@@ -898,6 +898,65 @@ exports.payDealerProjectPayment = async (phoneNumber, projectNo, amount, method,
             totalPaid: paymentAmount,
             remainingBalance: totalPending - paymentAmount
         }
+    };
+};
+
+
+// =============================================================================
+// updateDealerDetails
+//
+//  Updates dealer name and phone number across all associated documents.
+// =============================================================================
+exports.updateDealerDetails = async (phoneNumber, data, tenant_id) => {
+    if (!phoneNumber) throw new Error("Phone number is required");
+    const { newName, newPhoneNumber } = data;
+    if (!newName && !newPhoneNumber) throw new Error("Nothing to update");
+
+    const variations = getPhoneVariations(phoneNumber);
+    
+    let receiptQuery = materialReceivedCollection.where("dealerContact", "in", variations);
+    let paymentQuery = paymentsCollection.where("dealerContact", "in", variations);
+    let expenseQuery = siteExpensesCollection.where("dealerContact", "in", variations).where("type", "==", "materialPayment");
+
+    if (tenant_id && tenant_id !== 'GLOBAL') {
+        receiptQuery = receiptQuery.where("tenant_id", "==", tenant_id);
+        paymentQuery = paymentQuery.where("tenant_id", "==", tenant_id);
+        expenseQuery = expenseQuery.where("tenant_id", "==", tenant_id);
+    }
+
+    const [receiptSnap, paymentSnap, expenseSnap] = await Promise.all([
+        receiptQuery.get(),
+        paymentQuery.get(),
+        expenseQuery.get()
+    ]);
+
+    const batch = db.batch();
+    const updates = {};
+    if (newName) updates.dealerName = newName;
+    if (newPhoneNumber) {
+        updates.dealerContact = newPhoneNumber;
+        // Also update standard "contact" key if present
+        updates.contact = newPhoneNumber;
+    }
+
+    receiptSnap.forEach(doc => {
+        batch.update(doc.ref, updates);
+    });
+
+    paymentSnap.forEach(doc => {
+        batch.update(doc.ref, updates);
+    });
+
+    expenseSnap.forEach(doc => {
+        batch.update(doc.ref, updates);
+    });
+
+    await batch.commit();
+
+    return {
+        success: true,
+        message: "Dealer updated successfully",
+        updatedCount: receiptSnap.size + paymentSnap.size + expenseSnap.size
     };
 };
 

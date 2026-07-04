@@ -11,59 +11,66 @@ const banksCollection = db.collection("banks");
 //  We block type="materialPayment" here to prevent accidental duplication.
 //
 exports.createExpense = async (expenseData, tenant_id) => {
-    if (!expenseData.projectNo) {
-        throw new Error("projectNo is required");
-    }
+    if (!expenseData.projectNo) throw new Error("projectNo is required");
     if (!tenant_id) throw new Error("tenant_id is required");
-
-    if (!expenseData.amount) {
-        throw new Error("amount is required");
-    }
-
-    if (!expenseData.paymentMethod) {
-        throw new Error("paymentMethod is required (CASH or BANK)");
-    }
-
+    if (!expenseData.amount) throw new Error("amount is required");
+    if (!expenseData.paymentMethod) throw new Error("paymentMethod is required (CASH or BANK)");
+    
     const validMethods = ["CASH", "BANK"];
-    if (!validMethods.includes(expenseData.paymentMethod)) {
-        throw new Error("Invalid payment method");
-    }
+    if (!validMethods.includes(expenseData.paymentMethod)) throw new Error("Invalid payment method");
 
     expenseData.createdAt = new Date().toISOString();
     expenseData.amount = Number(expenseData.amount) || 0;
     expenseData.type = expenseData.type || "siteExpense";
+    expenseData.tenant_id = tenant_id;
 
-    // 🔥 BANK LOGIC START
+    // 🔥 PARALLEL FETCH for Bank and Past Expenses
+    const fetchPromises = [];
     if (expenseData.paymentMethod === "BANK") {
-        if (!expenseData.bankId) {
-            throw new Error("bankId is required for BANK payment");
-        }
+        if (!expenseData.bankId) throw new Error("bankId is required for BANK payment");
+        fetchPromises.push(db.collection("banks").doc(expenseData.bankId).get());
+    } else {
+        fetchPromises.push(Promise.resolve(null));
+    }
 
-        const bankDoc = await db.collection("banks").doc(expenseData.bankId).get();
+    fetchPromises.push(siteExpensesCollection.where("projectNo", "==", expenseData.projectNo).get());
 
-        if (!bankDoc.exists) {
-            throw new Error("Bank not found");
-        }
+    const [bankDoc, expenseSnapshot] = await Promise.all(fetchPromises);
 
+    // Calculate past expense
+    let totalPrevious = 0;
+    expenseSnapshot.forEach(doc => {
+        totalPrevious += Number(doc.data().amount || 0);
+    });
+    expenseData.pastExpense = totalPrevious;
+
+    const batch = db.batch();
+    const expenseRef = siteExpensesCollection.doc();
+
+    // 🔥 BANK LOGIC (Batched)
+    if (expenseData.paymentMethod === "BANK" && bankDoc) {
+        if (!bankDoc.exists) throw new Error("Bank not found");
+        
         const bankData = bankDoc.data();
         const currentBalance = Number(bankData.currentBalance || 0);
-
+        
         if (currentBalance < expenseData.amount) {
             throw new Error("Insufficient bank balance");
         }
-
+        
         const newBalance = currentBalance - expenseData.amount;
-
+        
         // 1️⃣ Update bank balance
-        await db.collection("banks").doc(expenseData.bankId).update({
+        batch.update(bankDoc.ref, {
             currentBalance: newBalance,
             closingBalance: newBalance,
             updatedAt: new Date().toISOString()
         });
 
-        // 2️⃣ Create transaction
+        // 2️⃣ Create transaction with reference to expense
+        const txnRef = db.collection("banks").doc(expenseData.bankId).collection("transactions").doc();
         const txnData = {
-            type: "DEBIT", // 🔥 expense = DEBIT
+            type: "DEBIT",
             amount: expenseData.amount,
             projectNo: expenseData.projectNo,
             remark: expenseData.remark || "Expense payment",
@@ -72,50 +79,21 @@ exports.createExpense = async (expenseData, tenant_id) => {
             balanceAfter: newBalance,
             transactionType: "EXPENSE",
             createdAt: new Date().toISOString(),
-            relatedExpenseId: null
+            relatedExpenseId: expenseRef.id // Set directly in batch
         };
-
-        const txnRef = await db
-            .collection("banks")
-            .doc(expenseData.bankId)
-            .collection("transactions")
-            .add(txnData);
+        batch.set(txnRef, txnData);
 
         expenseData.bankTransactionId = txnRef.id;
         expenseData.bankName = bankData.accountName || "Unknown Bank";
     }
-    // 🔥 BANK LOGIC END
 
+    // 3️⃣ Save expense
+    batch.set(expenseRef, expenseData);
 
-    // 🔁 calculate pastExpense (your existing logic)
-    const snapshot = await siteExpensesCollection
-        .where("projectNo", "==", expenseData.projectNo)
-        .get();
+    // Commit all changes atomically
+    await batch.commit();
 
-    let totalPrevious = 0;
-    snapshot.forEach(doc => {
-        totalPrevious += Number(doc.data().amount || 0);
-    });
-
-    expenseData.pastExpense = totalPrevious;
-
-    // 💾 save expense
-    expenseData.tenant_id = tenant_id;
-    const docRef = await siteExpensesCollection.add(expenseData);
-
-    // 🔁 update transaction with reference
-    if (expenseData.paymentMethod === "BANK" && expenseData.bankTransactionId) {
-        await db
-            .collection("banks")
-            .doc(expenseData.bankId)
-            .collection("transactions")
-            .doc(expenseData.bankTransactionId)
-            .update({
-                relatedExpenseId: docRef.id
-            });
-    }
-
-    return { expenseId: docRef.id, ...expenseData };
+    return { expenseId: expenseRef.id, ...expenseData };
 };
 
 

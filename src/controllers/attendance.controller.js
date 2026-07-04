@@ -10,6 +10,8 @@ exports.checkIn = async (req, res, next) => {
         if (!empID) return res.status(400).json({ message: "Employee ID not found in token" });
         const { latitude, longitude, locationName } = req.body;
         const result = await attendanceService.checkIn(empID, latitude, longitude, locationName);
+        const cache = require("../utils/cache");
+        cache.invalidate(`attendance_today_all_${req.tenantId || 'GLOBAL'}`);
         res.json(result);
     } catch (err) {
         next(err);
@@ -21,6 +23,8 @@ exports.checkOut = async (req, res, next) => {
         const empID = req.user.empID;
         if (!empID) return res.status(400).json({ message: "Employee ID not found in token" });
         const result = await attendanceService.checkOut(empID);
+        const cache = require("../utils/cache");
+        cache.invalidate(`attendance_today_all_${req.tenantId || 'GLOBAL'}`);
         res.json(result);
     } catch (err) {
         next(err);
@@ -74,6 +78,15 @@ exports.getAttendanceByMonth = async (req, res) => {
 
 exports.getAllTodayAttendance = async (req, res, next) => {
     try {
+        const cache = require("../utils/cache");
+        const tId = req.tenantId || 'GLOBAL';
+        const cacheKey = `attendance_today_all_${tId}`;
+        
+        const cachedData = cache.get(cacheKey);
+        if (cachedData) {
+            return res.json({ success: true, data: cachedData });
+        }
+
         const today = dayjs();
         const date = today.format("YYYY-MM-DD");
         const month = today.format("YYYY-MM");
@@ -93,11 +106,17 @@ exports.getAllTodayAttendance = async (req, res, next) => {
             }
         });
 
-        // 2. For each employee, check if they have attendance document for today
-        const attendancePromises = employeeList.map(async (emp) => {
-            const attDocRef = db.collection(ATTENDANCE).doc(emp.empID).collection(month).doc(date);
-            const attDoc = await attDocRef.get();
-            if (attDoc.exists) {
+        // 2. Build doc references for batch fetch
+        const docRefs = employeeList.map(emp => 
+            db.collection(ATTENDANCE).doc(emp.empID).collection(month).doc(date)
+        );
+
+        const attDocs = docRefs.length > 0 ? await db.getAll(...docRefs) : [];
+
+        // 3. Process attendance list using the batch-fetched documents
+        const results = employeeList.map((emp, index) => {
+            const attDoc = attDocs[index];
+            if (attDoc && attDoc.exists) {
                 const attData = attDoc.data();
                 
                 // Format the sessions list
@@ -147,7 +166,7 @@ exports.getAllTodayAttendance = async (req, res, next) => {
             }
         });
 
-        const results = await Promise.all(attendancePromises);
+        cache.set(cacheKey, results, 5 * 60 * 1000); // 5 mins cache
         res.json({ success: true, data: results });
     } catch (err) {
         next(err);
@@ -169,6 +188,9 @@ exports.resetTodayAttendance = async (req, res, next) => {
 
         const docRef = db.collection(ATTENDANCE).doc(empID).collection(month).doc(date);
         await docRef.delete();
+
+        const cache = require("../utils/cache");
+        cache.invalidate(`attendance_today_all_${req.tenantId || 'GLOBAL'}`);
 
         res.json({ success: true, message: "Today's attendance reset successfully" });
     } catch (err) {

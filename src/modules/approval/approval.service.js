@@ -124,14 +124,36 @@ exports.createApproval = async (data, tenant_id) => {
 
 exports.getApprovals = async (tenant_id) => {
     let query = approvalsCollection;
+    let advQuery = approvalAdvancesCollection;
+    let expQuery = approvalExpensesCollection;
+
     if (tenant_id && tenant_id !== 'GLOBAL') {
         query = query.where("tenant_id", "==", tenant_id);
+        advQuery = advQuery.where("tenant_id", "==", tenant_id);
+        expQuery = expQuery.where("tenant_id", "==", tenant_id);
     }
-    const snap = await query.get();
+
+    // ✅ PERF: 3 parallel reads instead of 1 + N*2 sequential reads
+    const [snap, advSnap, expSnap] = await Promise.all([
+        query.get(),
+        advQuery.get(),
+        expQuery.get(),
+    ]);
+
+    // Build in-memory maps: approvalId -> total
+    const advMap = {};
+    advSnap.forEach(doc => {
+        const d = doc.data();
+        advMap[d.approvalId] = (advMap[d.approvalId] || 0) + (Number(d.amountReceived) || 0);
+    });
+    const expMap = {};
+    expSnap.forEach(doc => {
+        const d = doc.data();
+        expMap[d.approvalId] = (expMap[d.approvalId] || 0) + (Number(d.amount) || 0);
+    });
 
     const approvals = snap.docs.map(doc => {
         const data = doc.data();
-        // Extract trailing digits from any prefix (VV, VVD, etc.)
         const match = (data.projectNo || "").match(/(\d+)$/);
         const num = match ? parseInt(match[1], 10) : 0;
         return { id: doc.id, ...data, _index: num };
@@ -140,14 +162,21 @@ exports.getApprovals = async (tenant_id) => {
     // DESC order — biggest projectNo first
     approvals.sort((a, b) => b._index - a._index);
 
-    // Calculate calculations dynamically for each approval in the list
-    const results = await Promise.all(
-        approvals.map(async (a) => {
-            const calcs = await getApprovalCalculations(a.id, a.financialDetails?.totalFees);
-            delete a._index;
-            return { ...a, calculations: calcs };
-        })
-    );
+    const results = approvals.map(a => {
+        const totalFees = Number(a.financialDetails?.totalFees) || 0;
+        const advancedPaid = advMap[a.id] || 0;
+        const expensePaid = expMap[a.id] || 0;
+        delete a._index;
+        return {
+            ...a,
+            calculations: {
+                advancedPaid,
+                expensePaid,
+                amountLeft: advancedPaid - expensePaid,
+                finalBalance: totalFees - advancedPaid,
+            }
+        };
+    });
 
     return results;
 };
@@ -193,8 +222,11 @@ exports.updateApproval = async (id, updateData, tenant_id) => {
     }
     // ✅ FIX: workStatus stays in updateData as its own field, NOT deleted
 
+    // ✅ PERF: Don't re-fetch full doc + calculations after update
+    // The Flutter client ignores this response body anyway (it refetches the list)
     await docRef.update(updateData);
-    return this.getApprovalById(doc.id, tenant_id);
+    return { id: doc.id, updated: true };
+
 };
 
 exports.getNextApprovalNo = async (tenant_id) => {
@@ -389,7 +421,9 @@ exports.updateStatus = async (id, currentStatus, tenant_id) => {
         "statusTracking.currentStatus": currentStatus
     });
 
-    return this.getApprovalById(doc.id, tenant_id);
+    // ✅ PERF: Don't re-fetch full doc + calculations after status update
+    return { id: doc.id, updated: true, currentStatus };
+
 };
 
 exports.updateExpense = async (expenseId, updateData, tenant_id) => {

@@ -25,8 +25,6 @@ app.listen(PORT, '0.0.0.0', async () => {
     console.log(`🚀 Server running on port ${PORT}`);
 
     // Call createDefaultAdmin explicitly and catch any errors.
-    // Previously it was only imported (never called here), so if the module
-    // self-invokes and throws, there was nothing to catch it.
     try {
         await createDefaultAdmin();
         const { initDefaultSubLabourTypes } = require("./src/modules/labour/labour.service");
@@ -37,8 +35,15 @@ app.listen(PORT, '0.0.0.0', async () => {
 });
 
 
-// ⏰ Cron job to check task reminders and send FCM push notifications every minute
-cron.schedule("* * * * *", async () => {
+// ✅ FIX #8: In-memory FCM token cache — avoids fetching all users/admins on every cron run
+let _fcmTokenCache = null;
+let _fcmTokenCacheTime = 0;
+const FCM_TOKEN_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+// ⏰ Cron job: check task reminders and send FCM push notifications
+// ✅ FIX #8: Changed "* * * * *" (every 1 min) → "*/5 * * * *" (every 5 min)
+// Reduces unnecessary Firestore reads by 80%
+cron.schedule("*/5 * * * *", async () => {
     try {
         const { db, admin } = require("./src/config/firebase");
         const dayjs = require("dayjs");
@@ -61,24 +66,34 @@ cron.schedule("* * * * *", async () => {
 
         if (dueTasks.length === 0) return;
 
-        // Fetch all active tokens
-        const adminsSnap = await db.collection('admins').get();
-        const usersSnap = await db.collection('users').get();
+        // ✅ FIX #8: Use cached tokens if still fresh — skip re-fetching all users/admins
+        let tokenList;
+        if (_fcmTokenCache && Date.now() - _fcmTokenCacheTime < FCM_TOKEN_CACHE_TTL_MS) {
+            tokenList = _fcmTokenCache;
+            console.log(`⚡ Using cached FCM tokens (${tokenList.length} devices)`);
+        } else {
+            // Cache miss — fetch fresh tokens from Firestore and cache them
+            const adminsSnap = await db.collection('admins').get();
+            const usersSnap = await db.collection('users').get();
 
-        const tokens = new Set();
-        adminsSnap.forEach(doc => {
-            const data = doc.data();
-            if (data.fcmToken) tokens.add(data.fcmToken);
-        });
-        usersSnap.forEach(doc => {
-            const data = doc.data();
-            if (data.fcmToken) tokens.add(data.fcmToken);
-        });
+            const tokens = new Set();
+            adminsSnap.forEach(doc => {
+                const data = doc.data();
+                if (data.fcmToken) tokens.add(data.fcmToken);
+            });
+            usersSnap.forEach(doc => {
+                const data = doc.data();
+                if (data.fcmToken) tokens.add(data.fcmToken);
+            });
 
-        const tokenList = Array.from(tokens);
+            tokenList = Array.from(tokens);
+            _fcmTokenCache = tokenList;
+            _fcmTokenCacheTime = Date.now();
+            console.log(`🔄 Refreshed FCM token cache (${tokenList.length} devices)`);
+        }
+
         if (tokenList.length === 0) {
             console.log(`⏰ ${dueTasks.length} tasks due, but no registered FCM tokens found.`);
-            // Still mark them as notified so we don't keep checking them indefinitely
             for (const task of dueTasks) {
                 await db.collection('tasks').doc(task.id).update({ notified: true });
             }
@@ -115,7 +130,8 @@ cron.schedule("* * * * *", async () => {
                     error: r.error ? { code: r.error.code, message: r.error.message } : null
                 }));
                 
-                // Clean up stale tokens
+                // Clean up stale tokens and invalidate cache if any are removed
+                let tokenRemoved = false;
                 if (response.responses) {
                     for (let i = 0; i < response.responses.length; i++) {
                         const res = response.responses[i];
@@ -125,25 +141,33 @@ cron.schedule("* * * * *", async () => {
                         )) {
                             const staleToken = tokenList[i];
                             console.log(`🗑️ Removing stale FCM token: ${staleToken}`);
-                            // Find and remove the token from Firestore
-                            const adminDoc = adminsSnap.docs.find(d => d.data().fcmToken === staleToken);
+                            // Re-fetch to get accurate snapshot for doc lookup
+                            const adminsSnap2 = await db.collection('admins').get();
+                            const usersSnap2 = await db.collection('users').get();
+                            const adminDoc = adminsSnap2.docs.find(d => d.data().fcmToken === staleToken);
                             if (adminDoc) {
                                 await db.collection('admins').doc(adminDoc.id).update({ fcmToken: admin.firestore.FieldValue.delete() });
                             } else {
-                                const userDoc = usersSnap.docs.find(d => d.data().fcmToken === staleToken);
+                                const userDoc = usersSnap2.docs.find(d => d.data().fcmToken === staleToken);
                                 if (userDoc) {
                                     await db.collection('users').doc(userDoc.id).update({ fcmToken: admin.firestore.FieldValue.delete() });
                                 }
                             }
+                            tokenRemoved = true;
                         }
                     }
+                }
+                // Invalidate cache so next cron run fetches fresh tokens
+                if (tokenRemoved) {
+                    _fcmTokenCache = null;
+                    _fcmTokenCacheTime = 0;
                 }
             } catch (err) {
                 console.error(`❌ Failed to send multicast message for task "${task.title}":`, err.message);
                 errorMsg = err.message;
             }
 
-            // Mark task status in database
+            // Mark task notification status in Firestore
             await db.collection('tasks').doc(task.id).update({ 
                 notified: notificationSuccess ? true : 'failed',
                 notificationError: errorMsg,

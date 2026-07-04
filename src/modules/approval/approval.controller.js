@@ -1,5 +1,6 @@
 const approvalService = require("./approval.service");
 const { db } = require("../../config/firebase");
+const cache = require("../../utils/cache");
 const approvalsCollection = db.collection("approvals");
 const approvalAdvancesCollection = db.collection("approvalAdvances");
 const approvalExpensesCollection = db.collection("approvalExpenses");
@@ -31,7 +32,13 @@ exports.createApproval = async (req, res) => {
 
 exports.getApprovals = async (req, res) => {
     try {
+        const cacheKey = `approvals_list_${req.tenantId || "global"}`;
+        const cached = cache.get(cacheKey);
+        if (cached) {
+            return res.status(200).json(cached);
+        }
         const result = await approvalService.getApprovals(req.tenantId);
+        cache.set(cacheKey, result, 300_000);
         res.status(200).json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -40,7 +47,13 @@ exports.getApprovals = async (req, res) => {
 
 exports.getApprovalById = async (req, res) => {
     try {
+        const cacheKey = `approvals_detail_${req.tenantId || "global"}_${req.params.id}`;
+        const cached = cache.get(cacheKey);
+        if (cached) {
+            return res.status(200).json(cached);
+        }
         const result = await approvalService.getApprovalById(req.params.id, req.tenantId);
+        cache.set(cacheKey, result, 300_000);
         res.status(200).json(result);
     } catch (error) {
         res.status(404).json({ error: error.message });

@@ -112,10 +112,21 @@ exports.createMaterial = async (materialData, tenant_id) => {
     
     materialData.tenant_id = tenant_id;
     await docRef.set(materialData);
+    
+    const cache = require("../../utils/cache");
+    cache.invalidatePrefix("materials_master_");
+    
     return materialData;
 };
 
 exports.getMaterials = async (tenant_id) => {
+    const cache = require("../../utils/cache");
+    const tId = tenant_id || 'GLOBAL';
+    const cacheKey = `materials_master_${tId}`;
+    
+    const cachedData = cache.get(cacheKey);
+    if (cachedData) return cachedData;
+
     let query = materialsCollection;
     if (tenant_id && tenant_id !== 'GLOBAL') {
         query = query.where("tenant_id", "==", tenant_id);
@@ -123,6 +134,8 @@ exports.getMaterials = async (tenant_id) => {
     const snapshot = await query.get();
     const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     results.sort((a, b) => (a.materialName || "").localeCompare(b.materialName || ""));
+    
+    cache.set(cacheKey, results, 5 * 60 * 1000); // 5 mins cache
     return results;
 };
 
@@ -135,30 +148,6 @@ exports.recordMaterialReceived = async (receivedData, tenant_id) => {
     if (!receivedData.projectNo || !normalizedId) throw new Error("projectNo and materialId are required");
     if (!normalizedName) throw new Error("materialName is required");
     if (!tenant_id) throw new Error("tenant_id is required");
-
-    // Ensure material exists in master list
-    const matRef = materialsCollection.doc(normalizedId);
-    const matDoc = await matRef.get();
-    if (!matDoc.exists) {
-        await matRef.set({
-            materialId: normalizedId,
-            materialName: normalizedName,
-            isDefault: false,
-            createdAt: new Date().toISOString()
-        });
-    }
-
-    // Stock consistency check
-    const stockId = `${receivedData.projectNo}_${normalizedId}`;
-    const stockRef = stockCollection.doc(stockId);
-    const stockDoc = await stockRef.get();
-
-    if (stockDoc.exists) {
-        const existingName = stockDoc.data().materialName;
-        if (existingName.toUpperCase() !== normalizedName) {
-            throw new Error(`Material ID '${normalizedId}' already registered as '${existingName}'.`);
-        }
-    }
 
     const receiptDate = getFormattedDate(receivedData.date);
     const quantity = Number(receivedData.quantity) || 0;
@@ -184,19 +173,54 @@ exports.recordMaterialReceived = async (receivedData, tenant_id) => {
         tenant_id
     };
 
-    const docRef = await materialReceivedCollection.add(finalData);
+    // 🚀 PARALLEL FETCH
+    const matRef = materialsCollection.doc(normalizedId);
+    const stockId = `${receivedData.projectNo}_${normalizedId}`;
+    const stockRef = stockCollection.doc(stockId);
+
+    const fetchPromises = [matRef.get(), stockRef.get()];
+    if (paidAmount > 0) {
+        fetchPromises.push(siteExpensesCollection.where("projectNo", "==", receivedData.projectNo).get());
+    } else {
+        fetchPromises.push(Promise.resolve(null));
+    }
+
+    const [matDoc, stockDoc, expenseSnap] = await Promise.all(fetchPromises);
+
+    const batch = db.batch();
+
+    // 1️⃣ Material Master
+    if (!matDoc.exists) {
+        batch.set(matRef, {
+            materialId: normalizedId,
+            materialName: normalizedName,
+            isDefault: false,
+            createdAt: new Date().toISOString(),
+            tenant_id // added tenant_id for consistency
+        });
+    }
+
+    // Stock consistency check
+    if (stockDoc.exists) {
+        const existingName = stockDoc.data().materialName;
+        if (existingName.toUpperCase() !== normalizedName) {
+            throw new Error(`Material ID '${normalizedId}' already registered as '${existingName}'.`);
+        }
+    }
+
+    const docRef = materialReceivedCollection.doc();
     const receiptId = docRef.id;
 
-    // Stock update (EXISTING — unchanged)
+    // 2️⃣ Stock Update
     if (stockDoc.exists) {
         const s = stockDoc.data();
-        await stockRef.update({
+        batch.update(stockRef, {
             receivedQuantity: (Number(s.receivedQuantity) || 0) + quantity,
             stock: (Number(s.stock) || 0) + quantity,
             updatedAt: receiptDate
         });
     } else {
-        await stockRef.set({
+        batch.set(stockRef, {
             projectNo: finalData.projectNo,
             materialId: normalizedId,
             materialName: normalizedName,
@@ -208,7 +232,32 @@ exports.recordMaterialReceived = async (receivedData, tenant_id) => {
         });
     }
 
-    // 🏦 BANK DEBIT: If paid via bank, deduct and record transaction
+    // 3️⃣ Expense tracking
+    if (paidAmount > 0 && expenseSnap) {
+        const isoNow = new Date().toISOString();
+        let totalPrevious = 0;
+        expenseSnap.forEach(doc => { totalPrevious += Number(doc.data().amount) || 0; });
+        
+        const expenseData = {
+            projectNo: receivedData.projectNo,
+            amount: paidAmount,
+            particular: `Material Purchase: ${receivedData.materialName}`,
+            remark: receivedData.dealerName
+                ? `Material Purchase: ${receivedData.materialName} (Dealer: ${receivedData.dealerName})`
+                : `Material Purchase: ${receivedData.materialName}`,
+            type: "materialPayment",
+            materialId: receivedData.materialId,
+            receiptId,
+            date: isoNow,
+            createdAt: isoNow,
+            tenant_id: receivedData.tenant_id || null,
+            pastExpense: totalPrevious
+        };
+        const expenseRef = siteExpensesCollection.doc();
+        batch.set(expenseRef, expenseData);
+    }
+
+    // 4️⃣ Bank Transaction (Awaited before batch commit)
     if (finalData.method === "bank" && finalData.bankId && paidAmount > 0) {
         const result = await handleBankTransaction({
             bankId: finalData.bankId,
@@ -218,19 +267,14 @@ exports.recordMaterialReceived = async (receivedData, tenant_id) => {
             transactionType: "MATERIAL_PAYMENT",
             relatedId: receiptId
         });
-        // Update the receipt with bank details
-        await docRef.update({
-            bankName: result.bankName,
-            bankTransactionId: result.transactionId
-        });
         finalData.bankName = result.bankName;
         finalData.bankTransactionId = result.transactionId;
     }
 
-    // Expense tracking (EXISTING — unchanged)
-    if (paidAmount > 0) {
-        await _createMaterialExpense(receiptId, finalData, paidAmount);
-    }
+    // 5️⃣ Save Material Received Doc
+    batch.set(docRef, finalData);
+
+    await batch.commit();
 
     return { receiptId, ...finalData };
 };

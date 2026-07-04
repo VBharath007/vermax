@@ -1,6 +1,10 @@
 const projectService = require("./project.service");
 const { db } = require("../../config/firebase");
 const { isGlobalTenant } = require("../../middleware/tenant.middleware");
+const cache = require("../../utils/cache");
+
+// Build a per-tenant cache key
+const _ck = (tenantId) => `projects_${tenantId || 'global'}`;
 
 exports.createProject = async (req, res, next) => {
     try {
@@ -8,6 +12,8 @@ exports.createProject = async (req, res, next) => {
             req.body.tenant_id = req.tenantId;
         }
         const result = await projectService.createProject(req.body);
+        // ✅ Invalidate list cache so next GET reflects new project
+        cache.invalidate(_ck(req.tenantId));
         res.status(201).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -16,6 +22,14 @@ exports.createProject = async (req, res, next) => {
 
 exports.getAllProjects = async (req, res) => {
   try {
+    const cacheKey = _ck(req.tenantId);
+
+    // ✅ PERF: Serve from memory if available (< 30s old) — skips Firestore entirely
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      return res.json({ success: true, data: cached, fromCache: true });
+    }
+
     let projectQuery = db.collection("projects");
     let imageQuery = db.collection("projectImages");
 
@@ -47,6 +61,9 @@ exports.getAllProjects = async (req, res) => {
 
     projects.sort((a, b) => b._index - a._index);
     projects = projects.map((p) => { delete p._index; return p; });
+
+    // ✅ Cache for 5 minutes (invalidated on any write)
+    cache.set(cacheKey, projects, 300_000);
 
     res.json({ success: true, data: projects });
   } catch (e) {
@@ -85,6 +102,18 @@ exports.getNextProjectNo = async (req, res) => {
 
 exports.getProjectByNo = async (req, res, next) => {
     try {
+        // ✅ Ultra-fast path: If the full project list is in memory, grab it from there
+        const cacheKey = _ck(req.tenantId);
+        const cachedList = cache.get(cacheKey);
+        
+        if (cachedList) {
+            const found = cachedList.find(p => p.projectNo === req.params.projectNo);
+            if (found) {
+                return res.status(200).json({ success: true, data: found, fromCache: true });
+            }
+        }
+
+        // Fallback if not cached or not found
         const result = await projectService.getProjectByNo(req.params.projectNo);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
@@ -95,6 +124,8 @@ exports.getProjectByNo = async (req, res, next) => {
 exports.updateProject = async (req, res, next) => {
     try {
         const result = await projectService.updateProject(req.params.projectNo, req.body);
+        // ✅ Invalidate cache so next GET shows updated status
+        cache.invalidate(_ck(req.tenantId));
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
@@ -105,6 +136,8 @@ exports.deleteProject = async (req, res) => {
     try {
         const { projectNo } = req.params;
         const result = await projectService.deleteProject(projectNo);
+        // ✅ Invalidate cache so deleted project disappears from list
+        cache.invalidate(_ck(req.tenantId));
         res.status(200).json(result);
     } catch (err) {
         console.error("Delete project error:", err);
@@ -128,8 +161,27 @@ exports.getProjectSummary = async (req, res, next) => {
 exports.getWorkHistory = async (req, res) => {
     try {
         const { projectNo } = req.params;
+        const cacheKey = `wh_${req.tenantId || 'global'}_${projectNo}`;
 
-        let queryProjects = db.collection("projects").where("projectNo", "==", projectNo);
+        // 1. Try to serve from memory cache
+        const cachedWH = cache.get(cacheKey);
+        if (cachedWH) {
+            return res.status(200).json({
+                success: true,
+                data: cachedWH
+            });
+        }
+
+        // Fetch Project Document directly via key-value lookup (much faster than query)
+        const projectDoc = await db.collection("projects").doc(projectNo).get();
+        if (!projectDoc.exists) {
+            return res.status(404).json({ success: false, message: "Project not found" });
+        }
+        const project = projectDoc.data();
+        if (!isGlobalTenant(req) && project.tenant_id !== req.tenantId) {
+            return res.status(403).json({ success: false, message: "Unauthorized" });
+        }
+
         let queryWorks = db.collection("works").where("projectNo", "==", projectNo);
         let queryReceived = db.collection("materialReceived").where("projectNo", "==", projectNo);
         let queryUsed = db.collection("materialUsed").where("projectNo", "==", projectNo);
@@ -139,7 +191,6 @@ exports.getWorkHistory = async (req, res) => {
         let queryStock = db.collection("stock").where("projectNo", "==", projectNo);
 
         if (!isGlobalTenant(req)) {
-            queryProjects = queryProjects.where("tenant_id", "==", req.tenantId);
             queryWorks = queryWorks.where("tenant_id", "==", req.tenantId);
             queryReceived = queryReceived.where("tenant_id", "==", req.tenantId);
             queryUsed = queryUsed.where("tenant_id", "==", req.tenantId);
@@ -150,7 +201,6 @@ exports.getWorkHistory = async (req, res) => {
         }
 
         const [
-            projectSnap,
             worksSnap,
             receivedSnap,
             usedSnap,
@@ -159,7 +209,6 @@ exports.getWorkHistory = async (req, res) => {
             requiredSnap,
             stockSnap
         ] = await Promise.all([
-            queryProjects.get(),
             queryWorks.get(),
             queryReceived.get(),
             queryUsed.get(),
@@ -169,7 +218,6 @@ exports.getWorkHistory = async (req, res) => {
             queryStock.get()
         ]);
 
-        const project = projectSnap.docs[0]?.data();
         const works = worksSnap.docs.map(doc => ({ workId: doc.id, ...doc.data() }));
         const received = receivedSnap.docs.map(doc => ({ receiptId: doc.id, ...doc.data() }));
         const used = usedSnap.docs.map(doc => ({ usageId: doc.id, ...doc.data() }));
@@ -205,27 +253,29 @@ exports.getWorkHistory = async (req, res) => {
         const currentTotalAdvance = totalAdvance > 0 ? totalAdvance : staticAdvancedPaid;
         const remainingBalance = currentTotalAdvance - totalExpense;
 
-        // ─── BUG FIX: wrap in { success: true, data: { ... } } ───────────────
-        // Flutter does: historyResponse['data']['workHistory']
-        // Without this wrapper, Flutter looks for body['data'] → null → crash
+        const payload = {
+            projectNo,
+            workHistory: works,
+            materialReceived: received,
+            materialUsed: used,
+            stock,
+            materialRequired,
+            advanceReceivedHistory: advances,
+            siteExpenseHistory: expenses,
+            totalAdvance: currentTotalAdvance,
+            totalExpense,
+            remainingBalance
+        };
+
+        // Cache resolved work history for 5 minutes (300,000 ms)
+        cache.set(cacheKey, payload, 300_000);
+
         res.status(200).json({
             success: true,
-            data: {
-                projectNo,
-                workHistory: works,
-                materialReceived: received,
-                materialUsed: used,
-                stock,
-                materialRequired,
-                advanceReceivedHistory: advances,
-                siteExpenseHistory: expenses,
-                totalAdvance: currentTotalAdvance,
-                totalExpense,
-                remainingBalance
-            }
+            data: payload
         });
 
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
-};
+};

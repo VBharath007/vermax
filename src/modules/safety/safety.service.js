@@ -54,8 +54,7 @@ exports.updateBriefing = async (id, data, tenant_id) => {
     };
 
     await docRef.update(updates);
-    const updated = await docRef.get();
-    return { id, ...updated.data() };
+    return { id, ...doc.data(), ...updates };
 };
 
 exports.deleteBriefing = async (id, tenant_id) => {
@@ -110,8 +109,7 @@ exports.updateIncident = async (id, data, tenant_id) => {
     };
 
     await docRef.update(updates);
-    const updated = await docRef.get();
-    return { id, ...updated.data() };
+    return { id, ...doc.data(), ...updates };
 };
 
 exports.deleteIncident = async (id, tenant_id) => {
@@ -160,11 +158,27 @@ exports.getWorkers = async (tenant_id) => {
             { name: "Subbu", role: "Plumber", helmet: false, shoes: false, vest: true }
         ];
 
+        const batch = db.batch();
         const createdDefaults = [];
+        const isoNow = new Date().toISOString();
+        
         for (const worker of defaults) {
-            const added = await exports.addWorker(worker, tenant_id);
-            createdDefaults.push(added);
+            const docRef = safetyCollection.doc();
+            const newWorker = {
+                type: "worker",
+                name: worker.name.trim(),
+                role: worker.role.trim(),
+                helmet: worker.helmet === true,
+                shoes: worker.shoes === true,
+                vest: worker.vest === true,
+                createdAt: isoNow,
+                tenant_id
+            };
+            batch.set(docRef, newWorker);
+            createdDefaults.push({ id: docRef.id, ...newWorker });
         }
+        
+        await batch.commit();
         return createdDefaults;
     }
 
@@ -187,8 +201,7 @@ exports.updateWorker = async (id, data, tenant_id) => {
     };
 
     await docRef.update(updates);
-    const updated = await docRef.get();
-    return { id, ...updated.data() };
+    return { id, ...doc.data(), ...updates };
 };
 
 exports.deleteWorker = async (id, tenant_id) => {

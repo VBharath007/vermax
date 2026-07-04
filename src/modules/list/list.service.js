@@ -1,33 +1,50 @@
 const { db } = require("../../config/firebase");
+const taskService = require("../task/task.service");
 
 const COLLECTION = "lists";
 const listsCol = () => db.collection(COLLECTION);
 const listRef  = (id) => db.collection(COLLECTION).doc(id);
 
-const getLists = async (tenant_id) => {
-  let listQuery = listsCol();
-  let taskQuery = db.collection("tasks").where("completed", "==", false);
+// ── In-Memory Cache ───────────────────────────────────────────────────────────
+const memoryCache = {
+  lists: new Map()
+};
+const CACHE_TTL = 5 * 60 * 1000;
 
-  if (tenant_id && tenant_id !== 'GLOBAL') {
-      listQuery = listQuery.where("tenant_id", "==", tenant_id);
-      taskQuery = taskQuery.where("tenant_id", "==", tenant_id);
+const clearListCache = (tenant_id) => {
+  const tId = tenant_id || 'GLOBAL';
+  memoryCache.lists.delete(tId);
+};
+
+const getLists = async (tenant_id) => {
+  const tId = tenant_id || 'GLOBAL';
+  let cachedLists = memoryCache.lists.get(tId);
+
+  if (!cachedLists || (Date.now() - cachedLists.timestamp >= CACHE_TTL)) {
+      let listQuery = listsCol();
+      if (tenant_id && tenant_id !== 'GLOBAL') {
+          listQuery = listQuery.where("tenant_id", "==", tenant_id);
+      }
+      const listsSnap = await listQuery.get();
+      cachedLists = {
+          data: listsSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+          timestamp: Date.now()
+      };
+      memoryCache.lists.set(tId, cachedLists);
   }
 
-  const [listsSnap, tasksSnap] = await Promise.all([
-    listQuery.get(),
-    taskQuery.get(),
-  ]);
+  // Get tasks from task.service (which is already cached!)
+  const incompleteTasks = await taskService.getAll(tenant_id);
 
   // Count tasks per listId in JS — no extra queries
   const countMap = {};
-  tasksSnap.docs.forEach((d) => {
-    const lid = d.data().listId || "default";
+  incompleteTasks.forEach((d) => {
+    const lid = d.listId || "default";
     countMap[lid] = (countMap[lid] || 0) + 1;
   });
 
-  return listsSnap.docs.map((d) => ({
-    id: d.id,
-    ...d.data(),
+  return cachedLists.data.map((d) => ({
+    ...d,
     taskCount: countMap[d.id] || 0,
   }));
 };
@@ -44,6 +61,7 @@ const createList = async (data, tenant_id) => {
     tenant_id,
   };
   const ref = await listsCol().add(payload);
+  clearListCache(tenant_id);
   return { id: ref.id, ...payload, taskCount: 0 };
 };
 
@@ -56,6 +74,7 @@ const updateList = async (id, data, tenant_id) => {
   delete updates.userId;
   await listRef(id).update(updates);
   const snap = await listRef(id).get();
+  clearListCache(tenant_id);
   return { id: snap.id, ...snap.data() };
 };
 
@@ -75,6 +94,7 @@ const deleteList = async (id, tenant_id) => {
   });
   batch.delete(listRef(id));
   await batch.commit();
+  clearListCache(tenant_id);
   return { deleted: true, tasksReassigned: taskSnap.size };
 };
 
